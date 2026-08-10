@@ -8,6 +8,10 @@ from app.database import engine, Base
 from app.ml.model_loader import get_ml_manager
 from app.api.endpoints import ingest_router, cows_router, hardware_router
 
+from sqladmin import Admin
+from app.admin import AdminAuth, UserAdmin, TagRegistryAdmin, RawPacketAdmin, DataloggerHeaderAdmin
+from starlette.middleware.sessions import SessionMiddleware
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cow_logger.main")
 
@@ -41,6 +45,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# SQLAdmin requires SessionMiddleware for authentication
+app.add_middleware(SessionMiddleware, secret_key="super-secret-cow-key")
+
+# Setup Admin Panel
+authentication_backend = AdminAuth(secret_key="super-secret-cow-key")
+admin = Admin(app=app, engine=engine, authentication_backend=authentication_backend, title="Cow Logger Admin")
+
+admin.add_view(UserAdmin)
+admin.add_view(TagRegistryAdmin)
+admin.add_view(RawPacketAdmin)
+admin.add_view(DataloggerHeaderAdmin)
 
 # Health checks for Render deployment
 @app.get("/health", tags=["Health"])
