@@ -44,6 +44,7 @@ export default function App() {
         const dataCurr = await resCurr.json();
         if (isSubscribed && dataCurr.success) {
           setCurrentData(dataCurr);
+          if (dataCurr.accelBuffer) setAccelBuffer(dataCurr.accelBuffer);
         }
       } catch (err) {
         console.error('Error loading cow data:', err);
@@ -118,7 +119,12 @@ export default function App() {
         // Manually refresh data
         fetch(`${API_BASE}/api/cow/${currentCowId}/current`)
           .then(r => r.json())
-          .then(d => { if (d.success) setCurrentData(d); });
+          .then(d => { 
+            if (d.success) {
+              setCurrentData(d);
+              if (d.accelBuffer) setAccelBuffer(d.accelBuffer);
+            }
+          });
       }
     } catch (e) {
       alert('Failed to execute BLE Data Dump.');
@@ -177,7 +183,12 @@ export default function App() {
               onReloadData={(id) => {
               fetch(`${API_BASE}/api/cow/${id}/current`)
                 .then(r => r.json())
-                  .then(d => { if (d.success) setCurrentData(d); });
+                .then(d => { 
+                  if (d.success) {
+                    setCurrentData(d);
+                    if (d.accelBuffer) setAccelBuffer(d.accelBuffer);
+                  }
+                });
               }}
             />
           )}
