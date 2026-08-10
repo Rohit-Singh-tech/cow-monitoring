@@ -2,19 +2,16 @@ from sqladmin import ModelView
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 from sqlalchemy.orm import Session
-from passlib.context import CryptContext
+import bcrypt
 
 from app.database import SessionLocal
 from app.models.user import User
 from app.models.tag_registry import TagRegistry
 from app.models.datalogger import RawPacket, SensorPacket, DataloggerHeader
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        # First try to verify as a bcrypt hash
-        return pwd_context.verify(plain_password, hashed_password)
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
     except Exception:
         # Fallback: if it's stored as plain-text in the database for some reason
         return plain_password == hashed_password
