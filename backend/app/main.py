@@ -6,7 +6,7 @@ import logging
 from app.config import settings
 from app.database import engine, Base
 from app.ml.model_loader import get_ml_manager
-from app.api.endpoints import ingest_router, cows_router, hardware_router
+from app.api.endpoints import ingest_router, cows_router, hardware_router, auth_router
 
 from sqladmin import Admin
 from app.admin import AdminAuth, UserAdmin, TagRegistryAdmin, RawPacketAdmin, DataloggerHeaderAdmin
@@ -75,6 +75,7 @@ def health_check():
 app.include_router(ingest_router, prefix=f"{settings.API_V1_STR}", tags=["Ingestion & Prediction"])
 app.include_router(cows_router, prefix=f"{settings.API_V1_STR}/cows", tags=["Cattle Monitoring"])
 app.include_router(hardware_router, prefix=f"{settings.API_V1_STR}", tags=["Hardware Specs"])
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 
 # Legacy / Frontend Compatibility Endpoints
 from fastapi import Depends

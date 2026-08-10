@@ -32,6 +32,21 @@ export default function TabBar({ activeTab, onSelectTab }) {
           {tab.label}
         </button>
       ))}
+
+      {/* Admin Panel Link */}
+      <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
+        <a 
+          href={import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com/admin' : 'http://localhost:8000/admin'} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          style={{ textDecoration: 'none' }}
+        >
+          <button class="tab-btn" style={{ width: '100%', justifyContent: 'center', background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+            <i class="fa-solid fa-lock" style={{ marginRight: '0.5rem' }}></i>
+            Admin Panel
+          </button>
+        </a>
+      </div>
     </nav>
   );
 }

@@ -6,6 +6,7 @@ import Activity7Day from './components/Activity7Day';
 import HerdOverview from './components/HerdOverview';
 import HardwareSpecs from './components/HardwareSpecs';
 import ProjectDocs from './components/ProjectDocs';
+import Login from './components/Login';
 import './index.css';
 
 const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
@@ -18,9 +19,11 @@ export default function App() {
   const [data7Day, setData7Day] = useState(null);
   const [logs, setLogs] = useState([]);
   const [accelBuffer, setAccelBuffer] = useState({ x: [], y: [], z: [], mag: [], labels: [] });
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
 
   // 1. Fetch initial cow list
   useEffect(() => {
+    if (!isAuthenticated) return;
     fetch(`${API_BASE}/api/cows`)
       .then(res => res.json())
       .then(data => {
@@ -32,10 +35,10 @@ export default function App() {
         }
       })
       .catch(err => console.error('Error fetching cows:', err));
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!currentCowId) return;
+    if (!currentCowId || !isAuthenticated) return;
     let isSubscribed = true;
 
     const loadCowData = async (cowId) => {
@@ -56,11 +59,11 @@ export default function App() {
     return () => {
       isSubscribed = false;
     };
-  }, [currentCowId]);
+  }, [currentCowId, isAuthenticated]);
 
   // Load 7-day & logs only if on 7day tab
   useEffect(() => {
-    if (!currentCowId || activeTab !== '7day') return;
+    if (!currentCowId || activeTab !== '7day' || !isAuthenticated) return;
 
     const fetch7Day = async () => {
       try {
@@ -77,11 +80,11 @@ export default function App() {
     };
 
     fetch7Day();
-  }, [currentCowId, activeTab]);
+  }, [currentCowId, activeTab, isAuthenticated]);
 
   // 3. Real-time Telemetry Stream Loop (5s interval)
   useEffect(() => {
-    if (!currentCowId || activeTab !== 'live') return;
+    if (!currentCowId || activeTab !== 'live' || !isAuthenticated) return;
 
     let isSubscribed = true;
     const timer = setInterval(async () => {
@@ -99,7 +102,7 @@ export default function App() {
       isSubscribed = false;
       clearInterval(timer);
     };
-  }, [currentCowId, activeTab]);
+  }, [currentCowId, activeTab, isAuthenticated]);
 
   const handleSelectCow = (id) => {
     setCurrentCowId(id);
@@ -131,8 +134,12 @@ export default function App() {
     }
   };
 
+  if (!isAuthenticated) {
+    return <Login onLogin={() => setIsAuthenticated(true)} />;
+  }
+
   return (
-    <div class="app-container">
+    <div className="app-container">
       {/* Left Sidebar */}
       <TabBar
         activeTab={activeTab}
@@ -140,7 +147,7 @@ export default function App() {
       />
 
       {/* Main Content Column */}
-      <div class="main-column">
+      <div className="main-column">
         {/* Top Navbar */}
         <Navbar
           cows={cows}
@@ -150,7 +157,7 @@ export default function App() {
         />
 
         {/* Scrollable Content */}
-        <main class="main-content">
+        <main className="main-content">
           {activeTab === 'live' && (
             <LiveCowMonitor
               currentData={currentData}
