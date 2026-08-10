@@ -8,6 +8,8 @@ import HardwareSpecs from './components/HardwareSpecs';
 import ProjectDocs from './components/ProjectDocs';
 import './index.css';
 
+const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+
 export default function App() {
   const [cows, setCows] = useState([]);
   const [currentCowId, setCurrentCowId] = useState('');
@@ -19,7 +21,7 @@ export default function App() {
 
   // 1. Fetch initial cow list
   useEffect(() => {
-    fetch('/api/cows')
+    fetch(`${API_BASE}/api/cows`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.cows && data.cows.length > 0) {
@@ -38,7 +40,7 @@ export default function App() {
 
     const loadCowData = async (cowId) => {
       try {
-        const resCurr = await fetch(`/api/cow/${cowId}/current`);
+        const resCurr = await fetch(`${API_BASE}/api/cow/${cowId}/current`);
         const dataCurr = await resCurr.json();
         if (isSubscribed && dataCurr.success) {
           setCurrentData(dataCurr);
@@ -61,11 +63,11 @@ export default function App() {
 
     const fetch7Day = async () => {
       try {
-        const res7 = await fetch(`/api/cow/${currentCowId}/7day`);
+        const res7 = await fetch(`${API_BASE}/api/cow/${currentCowId}/7day`);
         const data7 = await res7.json();
         if (data7.success) setData7Day(data7);
 
-        const resLogs = await fetch(`/api/cow/${currentCowId}/activity-log`);
+        const resLogs = await fetch(`${API_BASE}/api/cow/${currentCowId}/activity-log`);
         const dataLogs = await resLogs.json();
         if (dataLogs.success) setLogs(dataLogs.logs);
       } catch (err) {
@@ -83,7 +85,7 @@ export default function App() {
     let isSubscribed = true;
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/cow/${currentCowId}/current`);
+        const res = await fetch(`${API_BASE}/api/cow/${currentCowId}/current`);
         const data = await res.json();
         if (isSubscribed && data.success) {
           if (data.accelBuffer) setAccelBuffer(data.accelBuffer);
@@ -105,7 +107,7 @@ export default function App() {
 
   const handleTriggerDump = async () => {
     try {
-      const res = await fetch('/api/ble/trigger-dump', {
+      const res = await fetch(`${API_BASE}/api/ble/trigger-dump`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cowId: currentCowId })
@@ -114,7 +116,7 @@ export default function App() {
       if (data.success) {
         alert(`⚡ BLE Data Dump Completed for Cow #${currentCowId}!\n2,500 packets replayed from SPI Flash.`);
         // Manually refresh data
-        fetch(`/api/cow/${currentCowId}/current`)
+        fetch(`${API_BASE}/api/cow/${currentCowId}/current`)
           .then(r => r.json())
           .then(d => { if (d.success) setCurrentData(d); });
       }
@@ -173,8 +175,8 @@ export default function App() {
               currentCowId={currentCowId}
               currentData={currentData}
               onReloadData={(id) => {
-                fetch(`/api/cow/${id}/current`)
-                  .then(r => r.json())
+              fetch(`${API_BASE}/api/cow/${id}/current`)
+                .then(r => r.json())
                   .then(d => { if (d.success) setCurrentData(d); });
               }}
             />

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 
+const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+
 export default function HardwareSpecs({ currentCowId, currentData, onReloadData }) {
   const [terminalLogs, setTerminalLogs] = useState([
     { time: new Date().toLocaleTimeString(), text: '[SYSTEM INIT] Collar Node nRF52832 powered on. Entering BLE Scannable Beacon Mode.', type: 'warn' },
@@ -14,7 +16,7 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
   const handleSendDump = async () => {
     addTermLine('[BLE TRIGGER SENT] Broadcasting Data Dump Signature: 0x59 0x00 0xBB 0xCC...', 'sent');
     try {
-      const res = await fetch('/api/ble/trigger-dump', {
+      const res = await fetch(`${API_BASE}/api/ble/trigger-dump`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cowId: currentCowId })
@@ -36,7 +38,7 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
 
     addTermLine('[BLE RESET SENT] Broadcasting Reset Signature: 0x59 0x00 0xFF 0xFF...', 'sent');
     try {
-      const res = await fetch('/api/ble/trigger-reset', {
+      const res = await fetch(`${API_BASE}/api/ble/trigger-reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cowId: currentCowId })
