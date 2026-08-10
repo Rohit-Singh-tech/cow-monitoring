@@ -35,7 +35,7 @@ services:
       # You may need to update this URL once the backend is deployed if Render assigns a random suffix.
       - type: rewrite
         source: /api/*
-        destination: https://cow-logger-backend.onrender.com/api/*
+        destination: https://cow-monitoring01.onrender.com/api/*
       # SPA fallback for React
       - type: rewrite
         source: /*
