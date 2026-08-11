@@ -61,7 +61,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
     animation: false,
     scales: {
       x: { display: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } } },
-      y: { min: -1.5, max: 2.5, grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } } }
+      y: { grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } } }
     },
     plugins: { legend: { display: false } }
   };
