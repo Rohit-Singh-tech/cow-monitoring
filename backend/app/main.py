@@ -62,7 +62,11 @@ admin.add_view(DataloggerHeaderAdmin)
 
 @app.get("/", include_in_schema=False)
 def root():
-    return RedirectResponse(url="/docs")
+    return {
+        "message": "Welcome to Cow Monitoring API",
+        "docs_url": "/docs",
+        "redoc_url": "/redoc"
+    }
 
 # Health checks for Render deployment
 @app.get("/health", tags=["Health"])
