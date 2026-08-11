@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
@@ -58,6 +59,10 @@ admin.add_view(UserAdmin)
 admin.add_view(TagRegistryAdmin)
 admin.add_view(RawPacketAdmin)
 admin.add_view(DataloggerHeaderAdmin)
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
 
 # Health checks for Render deployment
 @app.get("/health", tags=["Health"])
