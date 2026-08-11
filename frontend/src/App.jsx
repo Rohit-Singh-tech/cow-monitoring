@@ -119,7 +119,7 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`⚡ BLE Data Dump Completed for Cow #${currentCowId}!\n2,500 packets replayed from SPI Flash.`);
+        alert(`⚡ BLE Data Dump Completed for Cow #${currentData?.device_id || currentCowId}!\n2,500 packets replayed from SPI Flash.`);
         // Manually refresh data
         fetch(`${API_BASE}/api/cow/${currentCowId}/current`)
           .then(r => r.json())

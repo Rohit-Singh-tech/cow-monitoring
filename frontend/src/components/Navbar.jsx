@@ -21,7 +21,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump 
           >
             {cows.map((c) => (
               <option key={c.id} value={c.id}>
-                Cow #{c.id} - {c.name} ({c.healthStatus === 'ESTRUS_ALERT' ? 'HEAT ALERT ⚡' : 'Healthy 🟢'})
+                Cow #{c.device_id} - {c.name} ({c.healthStatus === 'ESTRUS_ALERT' ? 'HEAT ALERT ⚡' : 'Healthy 🟢'})
               </option>
             ))}
           </select>

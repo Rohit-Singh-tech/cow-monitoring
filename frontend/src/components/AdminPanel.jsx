@@ -205,7 +205,7 @@ export default function AdminPanel() {
               <tbody>
                 {cows.map(c => (
                   <tr key={c.id} style={{ borderBottom: '1px solid #1e293b' }}>
-                    <td style={{ padding: '0.75rem 1rem', fontWeight: 'bold' }}>Cow #{c.id}</td>
+                    <td style={{ padding: '0.75rem 1rem', fontWeight: 'bold' }}>Cow #{c.device_id}</td>
                     <td style={{ padding: '0.75rem 1rem', color: '#94a3b8', fontFamily: 'monospace' }}>{c.mac_address}</td>
                     <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
                       <button onClick={() => handleDeleteTag(c.db_id || c.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}>

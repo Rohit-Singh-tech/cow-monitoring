@@ -101,7 +101,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
         <div class="alert-banner danger">
           <div class="alert-icon"><i class="fa-solid fa-fire-flame-curved"></i></div>
           <div class="alert-content">
-            <h4>⚡ ESTRUS HEAT DETECTED FOR COW #{currentData.cowId} ({currentData.cowName})</h4>
+            <h4>⚡ ESTRUS HEAT DETECTED FOR COW #{currentData.device_id} ({currentData.cowName})</h4>
             <p>{health.healthRecommendation}</p> 
           </div>
         </div>
