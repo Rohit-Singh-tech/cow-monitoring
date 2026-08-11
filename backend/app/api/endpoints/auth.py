@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.database import get_db
 from app.models.user import User
 from app.admin import verify_password
@@ -13,8 +14,10 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
+    search_term = request.username_or_email.lower().strip()
+    
     user = db.query(User).filter(
-        (User.username == request.username_or_email) | (User.email == request.username_or_email)
+        (func.lower(User.username) == search_term) | (func.lower(User.email) == search_term)
     ).first()
     
     if not user:
