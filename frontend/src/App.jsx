@@ -6,6 +6,7 @@ import Activity7Day from './components/Activity7Day';
 import HerdOverview from './components/HerdOverview';
 import HardwareSpecs from './components/HardwareSpecs';
 import ProjectDocs from './components/ProjectDocs';
+import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
 import './index.css';
 
@@ -134,6 +135,12 @@ export default function App() {
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('username');
+    setIsAuthenticated(false);
+  };
+
   if (!isAuthenticated) {
     return <Login onLogin={() => setIsAuthenticated(true)} />;
   }
@@ -144,6 +151,7 @@ export default function App() {
       <TabBar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Column */}
@@ -202,6 +210,10 @@ export default function App() {
 
           {activeTab === 'docs' && (
             <ProjectDocs />
+          )}
+
+          {activeTab === 'admin' && (
+            <AdminPanel />
           )}
         </main>
       </div>

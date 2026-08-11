@@ -1,12 +1,13 @@
 import React from 'react';
 
-export default function TabBar({ activeTab, onSelectTab }) {
+export default function TabBar({ activeTab, onSelectTab, onLogout }) {
   const tabs = [
-    { id: 'live', label: 'Dashboard', icon: 'fa-chart-pie' },
-    { id: '7day', label: 'Anomaly Log', icon: 'fa-triangle-exclamation' },
-    { id: 'herd', label: 'Animals', icon: 'fa-border-all' },
-    { id: 'hardware', label: 'BLE Node & Hardware Specs', icon: 'fa-microchip' },
-    { id: 'docs', label: 'IIT Ropar Project Report', icon: 'fa-file-contract' }
+    { id: 'live', icon: 'fa-heart-pulse', label: 'Live Vitals' },
+    { id: '7day', icon: 'fa-chart-line', label: '7-Day Activity' },
+    { id: 'herd', icon: 'fa-list', label: 'Herd Overview' },
+    { id: 'hardware', icon: 'fa-microchip', label: 'Hardware Specs' },
+    { id: 'docs', icon: 'fa-file-lines', label: 'Project Docs' },
+    { id: 'admin', icon: 'fa-user-shield', label: 'Admin Panel' }
   ];
 
   return (
@@ -33,6 +34,17 @@ export default function TabBar({ activeTab, onSelectTab }) {
         </button>
       ))}
 
+      {/* Logout Button */}
+      <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
+        <button 
+          className="tab-btn" 
+          onClick={onLogout}
+          style={{ width: '100%', justifyContent: 'center', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+        >
+          <i className="fa-solid fa-arrow-right-from-bracket" style={{ marginRight: '0.5rem' }}></i>
+          Logout
+        </button>
+      </div>
     </nav>
   );
 }
