@@ -110,57 +110,100 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
     return {"success": True, **data_7day}
 
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
-def api_get_cow_activity_log(cow_id: str):
-    import datetime
-    import random
+def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
+    from app.models.tag_registry import TagRegistry
+    from app.models.datalogger import DataloggerHeader
+    from sqlalchemy import text
+    from datetime import datetime, timedelta, timezone
     
-    # Use cow_id to make random deterministic per cow
-    try:
-        seed = int(cow_id)
-    except:
-        seed = sum(ord(c) for c in str(cow_id))
+    if str(cow_id).isdigit():
+        cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+    else:
+        cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+        
+    dev_id = cow.device_id if cow else str(cow_id)
     
-    random.seed(seed)
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
     
-    now = datetime.datetime.now()
+    headers = db.query(DataloggerHeader).filter(
+        DataloggerHeader.device_id == str(dev_id),
+        DataloggerHeader.timestamp >= day_ago
+    ).order_by(DataloggerHeader.timestamp.asc()).all()
+    
+    if not headers:
+        return {"success": True, "logs": []}
+        
+    num_chunks = min(len(headers), 8)
+    chunk_size = len(headers) // num_chunks if num_chunks > 0 else 1
+    
+    manager = get_ml_manager()
+    ACTIVITY_MAP = {
+        "RES": {"name": "Standing Rest", "color": "#64748b", "category": "Normal"},
+        "RUS": {"name": "Ruminating", "color": "#06b6d4", "category": "Normal"},
+        "MOV": {"name": "Walking", "color": "#f59e0b", "category": "Active"},
+        "FEP": {"name": "Feeding", "color": "#10b981", "category": "Normal"},
+        "FED": {"name": "Feeding", "color": "#10b981", "category": "Normal"},
+        "DRN": {"name": "Drinking", "color": "#3b82f6", "category": "Normal"},
+        "LCK": {"name": "Licking", "color": "#ec4899", "category": "Normal"},
+        "REL": {"name": "Lying Rest", "color": "#8b5cf6", "category": "Normal"},
+        "URI": {"name": "Urinating", "color": "#eab308", "category": "Normal"},
+        "DEF": {"name": "Defecating", "color": "#a16207", "category": "Normal"},
+        "ATT": {"name": "Aggressive", "color": "#ef4444", "category": "Active"},
+        "GRZ": {"name": "Grazing", "color": "#10b981", "category": "Normal"}
+    }
     
     logs = []
-    current_time = now
     
-    activities = [
-        {"code": "RUS", "name": "Ruminating", "color": "#06b6d4", "category": "Normal"},
-        {"code": "FEP", "name": "Feeding", "color": "#10b981", "category": "Normal"},
-        {"code": "REL", "name": "Lying Rest", "color": "#8b5cf6", "category": "Normal"},
-        {"code": "MOV", "name": "Walking", "color": "#f59e0b", "category": "Active"},
-        {"code": "DRN", "name": "Drinking", "color": "#3b82f6", "category": "Normal"},
-    ]
-    
-    base_log_id = seed * 100
-    base_pkt_id = seed * 1000
-    
-    # Generate 4-6 random logs
-    num_logs = random.randint(4, 6)
-    
-    for i in range(num_logs):
-        dur = random.randint(10, 90)
-        act = random.choice(activities)
-        start_time = current_time - datetime.timedelta(minutes=dur)
+    for i in range(num_chunks):
+        start_idx = i * chunk_size
+        end_idx = (i + 1) * chunk_size - 1 if i < num_chunks - 1 else len(headers) - 1
+        
+        chunk_headers = headers[start_idx:end_idx+1]
+        if not chunk_headers:
+            continue
+            
+        start_h = chunk_headers[0]
+        end_h = chunk_headers[-1]
+        
+        if start_h.timestamp and end_h.timestamp:
+            dur_mins = int((end_h.timestamp - start_h.timestamp).total_seconds() / 60.0)
+        else:
+            dur_mins = 1
+        if dur_mins < 1:
+            dur_mins = 1
+            
+        points_sql = text("SELECT x, y, z FROM datalogger_points WHERE header_id = :hid ORDER BY point_index ASC")
+        pts = db.execute(points_sql, {"hid": start_h.id}).fetchall()
+        
+        if len(pts) > 0:
+            x_buf = [p[0] for p in pts]
+            y_buf = [p[1] for p in pts]
+            z_buf = [p[2] for p in pts]
+            ml_pred = manager.predict(x_buf, y_buf, z_buf)
+            act_code = ml_pred["activity"]["code"]
+            conf = int(ml_pred["activity"]["confidence"] * 100) if "confidence" in ml_pred["activity"] else 85
+        else:
+            act_code = "RES"
+            conf = 80
+            
+        act_info = ACTIVITY_MAP.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
         
         logs.append({
-            "logId": base_log_id + i,
-            "startTime": start_time.isoformat(),
-            "endTime": current_time.isoformat(),
-            "durationMinutes": dur,
-            "activityCode": act["code"],
-            "activityName": act["name"],
-            "color": act["color"],
-            "category": act["category"],
-            "confidencePercent": random.randint(80, 98),
-            "startPacketId": f"P-{base_pkt_id + i*10}",
-            "endPacketId": f"P-{base_pkt_id + i*10 + random.randint(5, 15)}"
+            "logId": start_h.id,
+            "startTime": start_h.timestamp.isoformat() if start_h.timestamp else "",
+            "endTime": end_h.timestamp.isoformat() if end_h.timestamp else "",
+            "durationMinutes": dur_mins,
+            "activityCode": act_code,
+            "activityName": act_info["name"],
+            "color": act_info["color"],
+            "category": act_info["category"],
+            "confidencePercent": conf,
+            "startPacketId": f"P-{start_h.packet_id_num}",
+            "endPacketId": f"P-{end_h.packet_id_num}"
         })
         
-        current_time = start_time
+    logs.reverse()
         
     return {
         "success": True,
