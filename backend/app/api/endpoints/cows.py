@@ -257,44 +257,42 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     """)
     rows = db.execute(sql, {"dev": str(dev_id)}).fetchall()
     
-    if rows:
-        def parse_day(d):
-            if isinstance(d, str):
-                return datetime.strptime(d, "%Y-%m-%d").strftime("%a")
-            elif d:
-                return d.strftime("%a")
-            return "Unk"
+    today = datetime.now(timezone.utc).date()
+    date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
+    
+    db_map = {}
+    for r in rows:
+        if isinstance(r[0], str):
+            try:
+                d = datetime.strptime(r[0], "%Y-%m-%d").date()
+                db_map[d] = r[1]
+            except ValueError:
+                pass
+        else:
+            db_map[r[0]] = r[1]
             
-        days = [parse_day(r[0]) for r in reversed(rows)]
-        rum_list = [round((r[1] * 8.0 / 3600.0) * 0.45, 1) for r in reversed(rows)]
-        lying_list = [round((r[1] * 8.0 / 3600.0) * 0.50, 1) for r in reversed(rows)]
-        feed_list = [round((r[1] * 8.0 / 3600.0) * 0.20, 1) for r in reversed(rows)]
-        act_list = [round((r[1] * 8.0 / 3600.0) * 0.15, 1) for r in reversed(rows)]
-    else:
-        import random
-        try:
-            seed = int(cow_id)
-        except:
-            seed = sum(ord(c) for c in str(cow_id))
-        random.seed(seed)
+    days = []
+    dates = []
+    rum_list = []
+    lying_list = []
+    feed_list = []
+    act_list = []
+    
+    for d in date_range:
+        days.append(d.strftime("%a"))
+        dates.append(d.strftime("%Y-%m-%d"))
+        pkt_count = db_map.get(d, 0)
         
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        
-        # Base values for a healthy cow, varied by random floats
-        base_rum = random.uniform(7.0, 9.0)
-        base_lying = random.uniform(10.0, 12.5)
-        base_feed = random.uniform(3.5, 5.0)
-        base_act = random.uniform(1.0, 2.5)
-        
-        rum_list = [round(base_rum + random.uniform(-1.5, 1.5), 1) for _ in range(7)]
-        lying_list = [round(base_lying + random.uniform(-1.5, 1.5), 1) for _ in range(7)]
-        feed_list = [round(base_feed + random.uniform(-0.8, 0.8), 1) for _ in range(7)]
-        act_list = [round(base_act + random.uniform(-0.5, 0.5), 1) for _ in range(7)]
-        
+        rum_list.append(round((pkt_count * 8.0 / 3600.0) * 0.45, 1))
+        lying_list.append(round((pkt_count * 8.0 / 3600.0) * 0.50, 1))
+        feed_list.append(round((pkt_count * 8.0 / 3600.0) * 0.20, 1))
+        act_list.append(round((pkt_count * 8.0 / 3600.0) * 0.15, 1))
+
     return {
         "cowId": cow_id,
         "device_id": str(dev_id),
         "days": days,
+        "dates": dates,
         "ruminationHours": rum_list,
         "lyingRestHours": lying_list,
         "feedingHours": feed_list,

@@ -32,7 +32,7 @@ export default function Activity7Day({ data7Day, logs, cowId }) {
   if (!history && data7Day.days) {
     history = data7Day.days.map((day, idx) => ({
       day: day,
-      date: `2026-08-0${idx+1}`, 
+      date: data7Day.dates ? data7Day.dates[idx] : `2026-08-0${idx+1}`, 
       REL: data7Day.lyingRestHours?.[idx] || 0,
       RUS: data7Day.ruminationHours?.[idx] || 0,
       FEP: data7Day.feedingHours?.[idx] || 0,
