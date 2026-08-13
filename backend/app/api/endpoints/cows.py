@@ -257,20 +257,6 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     """)
     rows = db.execute(sql, {"dev": str(dev_id)}).fetchall()
     
-    today = datetime.now(timezone.utc).date()
-    date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
-    
-    db_map = {}
-    for r in rows:
-        if isinstance(r[0], str):
-            try:
-                d = datetime.strptime(r[0], "%Y-%m-%d").date()
-                db_map[d] = r[1]
-            except ValueError:
-                pass
-        else:
-            db_map[r[0]] = r[1]
-            
     days = []
     dates = []
     rum_list = []
@@ -278,10 +264,18 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     feed_list = []
     act_list = []
     
-    for d in date_range:
+    for r in reversed(rows):
+        if isinstance(r[0], str):
+            try:
+                d = datetime.strptime(r[0], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+        else:
+            d = r[0]
+            
         days.append(d.strftime("%a"))
         dates.append(d.strftime("%Y-%m-%d"))
-        pkt_count = db_map.get(d, 0)
+        pkt_count = r[1]
         
         rum_list.append(round((pkt_count * 8.0 / 3600.0) * 0.45, 1))
         lying_list.append(round((pkt_count * 8.0 / 3600.0) * 0.50, 1))
