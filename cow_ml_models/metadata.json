@@ -1,0 +1,32 @@
+{
+    "window_size": 200,
+    "step_size": 100,
+    "activity_raw_rows": 889376,
+    "activity_windows": 8871,
+    "heat_raw_rows": 1048571,
+    "heat_windows": 10484,
+    "activity_classes": [
+        "ATT",
+        "BMN",
+        "DEF",
+        "DRN",
+        "FED",
+        "FEP",
+        "FES",
+        "GRZ",
+        "LCK",
+        "MOV",
+        "NAN",
+        "OTHER_ACTIVITY",
+        "REL",
+        "RES",
+        "RUS",
+        "SLT",
+        "URI"
+    ],
+    "other_activity": "OTHER_ACTIVITY",
+    "best_activity_model": "LightGBM",
+    "best_heat_model": "LightGBM",
+    "anomaly_threshold": -2.051852611428817e-17,
+    "deviation_threshold": 1.6005215644836426
+}

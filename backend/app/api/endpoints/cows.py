@@ -126,10 +126,12 @@ def get_herd_overview(db: Session = Depends(get_db)):
             act_code = ml_pred["activity"]["code"]
             is_heat = ml_pred["heat_detection"]["in_heat"]
             estrus_prob = int(ml_pred["heat_detection"]["heat_probability"] * 100)
+            health_risk = ml_pred.get("health_risk_decision", "HEALTHY")
         else:
             act_code = "RES"
             is_heat = False
             estrus_prob = 10
+            health_risk = "HEALTHY"
             
         result.append({
             "id": c.id,
@@ -140,6 +142,7 @@ def get_herd_overview(db: Session = Depends(get_db)):
             "location": c.location or "Rupnagar Farm",
             "weight": f"{c.weight} kg" if c.weight else "400 kg",
             "healthStatus": "ESTRUS_ALERT" if is_heat else "HEALTHY",
+            "health_risk_decision": health_risk,
             "currentActivity": act_code,
             "ruminationHoursToday": round(min(12.0, max(3.5, health_meta["monitored_hours_today"] * 0.45)), 1),
             "lyingHoursToday": round(min(14.0, max(4.0, health_meta["monitored_hours_today"] * 0.50)), 1),
@@ -182,6 +185,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
     is_heat = ml_res["heat_detection"]["in_heat"]
     heat_prob_pct = int(ml_res["heat_detection"]["heat_probability"] * 100)
+    health_risk = ml_res.get("health_risk_decision", "HEALTHY")
 
     mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
@@ -215,7 +219,8 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
             "ruminationScore": min(100, int((rum_hrs / 8.0) * 100)),
             "estrusProbabilityPercent": heat_prob_pct,
             "isHeatDetected": is_heat,
-            "healthRecommendation": "Cattle exhibiting heightened movement and estrus activity. Recommend AI insemination window within next 12 hours." if is_heat else "All vital health parameters are within normal baseline ranges."
+            "healthRecommendation": "Cattle exhibiting heightened movement and estrus activity. Recommend AI insemination window within next 12 hours." if is_heat else "All vital health parameters are within normal baseline ranges.",
+            "health_risk_decision": health_risk
         },
         "liveTelemetry": {
             "x": x_buf[-1] if len(x_buf) > 0 else 0,
