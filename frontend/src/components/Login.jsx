@@ -48,9 +48,8 @@ export default function Login({ onLogin }) {
         
         {/* Logo Section */}
         <div className="login-logo-container">
-          <div className="login-logo">
-            <i className="fa-solid fa-leaf" style={{ color: '#10b981', marginRight: '-5px', zIndex: 2, background: '#111827', borderRadius: '50%', padding: '0.2rem' }}></i>
-            <i className="fa-solid fa-cow" style={{ color: '#0ea5e9' }}></i>
+          <div className="login-logo" style={{ width: '80px', height: '80px' }}>
+            <img src="/cow-logo.png" alt="Cow Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
           </div>
           <h2 className="login-title">IIT Ropar AwaDH</h2>
         </div>

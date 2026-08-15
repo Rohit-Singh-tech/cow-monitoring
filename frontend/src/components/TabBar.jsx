@@ -1,36 +1,32 @@
 import React from 'react';
 
-export default function TabBar({ activeTab, onSelectTab, onLogout }) {
+export default function TabBar({ activeTab, onSelectTab, onLogout, isOpen, onClose }) {
   const tabs = [
     { id: 'live', icon: 'fa-satellite', label: 'SYS DIAGNOSTICS' },
     { id: '7day', icon: 'fa-chart-network', label: '7-DAY LOGS' },
     { id: 'herd', icon: 'fa-list-ul', label: 'NODE DIRECTORY' },
     { id: 'hardware', icon: 'fa-microchip', label: 'HARDWARE SPECS' },
-    { id: 'docs', icon: 'fa-folder-open', label: 'ARCHIVES' },
-    { id: 'admin', icon: 'fa-terminal', label: 'ROOT ACCESS' }
+    { id: 'docs', icon: 'fa-folder-open', label: 'ARCHIVES' }
   ];
 
   return (
-    <nav className="tab-bar">
+    <>
+      <div className={`sidebar-overlay ${isOpen ? 'open' : ''}`} onClick={onClose}></div>
+      <nav className={`tab-bar ${isOpen ? 'open' : ''}`}>
       {/* Brand Section in Sidebar */}
       <div className="brand-section" style={{ padding: '0.5rem 0 1.5rem 0', borderBottom: '1px solid var(--border-glass)', marginBottom: '1.5rem', gap: '1rem', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
         <div className="brand-logo" style={{ 
-          background: 'linear-gradient(135deg, var(--primary-cyan), var(--accent-magenta))', 
-          color: '#000', 
-          boxShadow: '0 0 20px rgba(0, 243, 255, 0.5)', 
-          borderRadius: '2px',
-          width: '50px',
-          height: '50px',
+          width: '80px',
+          height: '80px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: '1.5rem'
         }}>
-          <i className="fa-solid fa-cow"></i>
+          <img src="/cow-logo.png" alt="Cyber Cow Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </div>
         <div>
-          <h1 className="brand-title" style={{ fontSize: '1.4rem', fontWeight: 800, fontFamily: 'Rajdhani', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--primary-cyan)', margin: '0' }}>NEURAL HERD</h1>
-          <div className="brand-subtitle" style={{ fontSize: '0.65rem', fontFamily: 'JetBrains Mono', color: 'var(--text-muted)', marginTop: '0.2rem' }}>EDGE-COMPUTING PROTOCOL</div>
+          <h1 className="brand-title" style={{ fontSize: '1.2rem', fontWeight: 800, fontFamily: 'Rajdhani', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--primary-cyan)', margin: '0', lineHeight: '1.2' }}>Cow Health<br/>Monitoring</h1>
+          <div className="brand-subtitle" style={{ fontSize: '0.65rem', fontFamily: 'JetBrains Mono', color: 'var(--text-muted)', marginTop: '0.5rem', lineHeight: '1.2' }}>GATEWAYLESS<br/>MONITORING SYSTEM</div>
         </div>
       </div>
 
@@ -57,5 +53,6 @@ export default function TabBar({ activeTab, onSelectTab, onLogout }) {
         </button>
       </div>
     </nav>
+    </>
   );
 }

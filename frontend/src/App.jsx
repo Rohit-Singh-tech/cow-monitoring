@@ -6,7 +6,6 @@ import Activity7Day from './components/Activity7Day';
 import HerdOverview from './components/HerdOverview';
 import HardwareSpecs from './components/HardwareSpecs';
 import ProjectDocs from './components/ProjectDocs';
-import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
 import './index.css';
 
@@ -21,6 +20,8 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [accelBuffer, setAccelBuffer] = useState({ x: [], y: [], z: [], mag: [], labels: [] });
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // 1. Fetch initial cow list
   useEffect(() => {
@@ -150,8 +151,10 @@ export default function App() {
       {/* Left Sidebar */}
       <TabBar
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={(tab) => { setActiveTab(tab); setIsSidebarOpen(false); }}
         onLogout={handleLogout}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
       />
 
       {/* Main Content Column */}
@@ -162,6 +165,7 @@ export default function App() {
           currentCowId={currentCowId}
           onSelectCow={handleSelectCow}
           onTriggerDump={handleTriggerDump}
+          onToggleMenu={() => setIsSidebarOpen(!isSidebarOpen)}
         />
 
         {/* Scrollable Content */}
@@ -210,10 +214,6 @@ export default function App() {
 
           {activeTab === 'docs' && (
             <ProjectDocs />
-          )}
-
-          {activeTab === 'admin' && (
-            <AdminPanel />
           )}
         </main>
       </div>

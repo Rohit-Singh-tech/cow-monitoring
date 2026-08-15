@@ -105,8 +105,8 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
       {/* Hero Status Card */}
       <div className={`hero-status-card health-${riskClass}`} style={{ marginBottom: '2rem' }}>
         <div className="cow-profile-header">
-          <div className="cow-avatar">
-            <i className="fa-solid fa-cow"></i>
+          <div className="cow-avatar" style={{ clipPath: 'none', background: 'transparent', border: 'none', boxShadow: 'none' }}>
+            <img src="/cow-logo.png" alt="Cow Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
           </div>
           <div className="cow-info-main">
             <h2>{currentData.cowName} ({currentData.tagNumber})</h2>
