@@ -36,6 +36,7 @@ class MLModelManager:
         if cls._instance is None:
             cls._instance = super(MLModelManager, cls).__new__(cls)
             cls._instance.is_loaded = False
+            cls._instance.load_attempted = False
             cls._instance.models_dict = {}
             cls._instance.metadata = {}
         return cls._instance
@@ -43,6 +44,10 @@ class MLModelManager:
     def load_models(self, path: str = None) -> bool:
         if self.is_loaded:
             return True
+        if self.load_attempted:
+            return False
+            
+        self.load_attempted = True
             
         model_path = path or settings.MODEL_PATH
         if not os.path.exists(model_path) or not os.path.isdir(model_path):
