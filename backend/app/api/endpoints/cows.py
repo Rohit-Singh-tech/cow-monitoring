@@ -247,6 +247,41 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     heat_prob_pct = int(ml_res["heat_detection"]["heat_probability"] * 100)
     health_risk = ml_res.get("health_risk_decision", "HEALTHY")
 
+    # Generate AI recommendation based on exact risk factors
+    recommendation = "All vital health parameters are normal."
+    
+    if health_risk == "HIGH_RISK":
+        issues = []
+        actions = []
+        
+        if is_heat or ml_res.get("heat_detection", {}).get("alert_level") == "HIGH":
+            issues.append("signs of being in heat")
+            actions.append("prepare for artificial insemination (breeding) in the next 12 hours")
+            
+        if ml_res.get("anomaly_detection", {}).get("is_anomaly"):
+            issues.append("unusual movement patterns")
+            actions.append("physically check the cow for injury or sickness")
+            
+        if ml_res.get("deviation_metrics", {}).get("is_deviating"):
+            issues.append("behavior that is very different from the rest of the herd")
+            if "physically check the cow for injury or sickness" not in actions:
+                actions.append("physically check the cow for injury or sickness")
+                
+        if issues:
+            issue_str = " and ".join(issues)
+            action_str = " and ".join(actions)
+            recommendation = f"CRITICAL: Cow is showing {issue_str}. Action needed: {action_str.capitalize()}."
+        else:
+            recommendation = "CRITICAL: Severe health risk detected. Action needed: Physically check the cow immediately."
+            
+    elif health_risk == "MONITOR":
+        if act_code == "OTHER_ACTIVITY":
+            recommendation = "MONITOR: Cow is showing unusual activity. Keep a close eye on her."
+        elif ml_res.get("heat_detection", {}).get("alert_level") == "MODERATE":
+            recommendation = "MONITOR: Cow might be coming into heat. Watch for more signs."
+        else:
+            recommendation = "MONITOR: Some health metrics are slightly off. Keep a close eye on her."
+
     mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
 
@@ -273,7 +308,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
             "ruminationScore": min(100, int((health_meta["rum_hrs"] / 8.0) * 100)) if health_meta["rum_hrs"] else 0,
             "estrusProbabilityPercent": heat_prob_pct,
             "isHeatDetected": is_heat,
-            "healthRecommendation": "Cattle exhibiting heightened movement and estrus activity. Recommend AI insemination window within next 12 hours." if is_heat else "All vital health parameters are within normal baseline ranges.",
+            "healthRecommendation": recommendation,
             "health_risk_decision": health_risk
         },
         "liveTelemetry": {
