@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # ML Model Path
     MODEL_PATH: str = os.getenv(
         "MODEL_PATH",
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cow_ml_models", "trained_models", "cow_health_xgboost_models.pkl"))
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cow_ml_models"))
     )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
