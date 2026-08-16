@@ -91,16 +91,16 @@ export default function ProjectDocs() {
             </h4>
 
             <ul style={{ listStyle: 'none', fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <li><strong style={{ color: '#fff' }}>Project Title:</strong> Gateway Less Cow Health Monitoring System</li>
-              <li><strong style={{ color: '#fff' }}>Lead Org:</strong> AWaDH Hub, IIT Ropar</li>
-              <li><strong style={{ color: '#fff' }}>Primary Sensor:</strong> LIS3DH 3-Axis Accelerometer</li>
-              <li><strong style={{ color: '#fff' }}>Sampling Rate:</strong> 10 Hz / 100 ms interval</li>
-              <li><strong style={{ color: '#fff' }}>Controller:</strong> nRF52832 BLE SoC</li>
-              <li><strong style={{ color: '#fff' }}>Local Storage:</strong> 8 MB SPI Flash (32,768 Packets)</li>
-              <li><strong style={{ color: '#fff' }}>Logging Capacity:</strong> ~72.8 Hours continuous</li>
-              <li><strong style={{ color: '#fff' }}>Battery:</strong> 3.7V 5400 mAh Li-Ion</li>
-              <li><strong style={{ color: '#fff' }}>Avg Current Draw:</strong> 98.16 µA</li>
-              <li><strong style={{ color: '#fff' }}>Calculated Runtime:</strong> ~6.28 Years</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Project Title:</strong> Gateway Less Cow Health Monitoring System</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Lead Org:</strong> AWaDH Hub, IIT Ropar</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Primary Sensor:</strong> LIS3DH 3-Axis Accelerometer</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Sampling Rate:</strong> 10 Hz / 100 ms interval</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Controller:</strong> nRF52832 BLE SoC</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Local Storage:</strong> 8 MB SPI Flash (32,768 Packets)</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Logging Capacity:</strong> ~72.8 Hours continuous</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Battery:</strong> 3.7V 5400 mAh Li-Ion</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Avg Current Draw:</strong> 98.16 µA</li>
+              <li><strong style={{ color: 'var(--color-white)' }}>Calculated Runtime:</strong> ~6.28 Years</li>
             </ul>
           </div>
 

@@ -23,7 +23,7 @@ ChartJS.register(
   Legend
 );
 
-export default function Activity7Day({ data7Day, logs, cowId }) {
+export default function Activity7Day({ data7Day, logs, cowId, theme }) {
   if (!data7Day) return <div className="glass-panel" style={{ padding: '2rem' }}>Loading 7-day activity data...</div>;
 
   let history = data7Day.history;
@@ -63,12 +63,15 @@ export default function Activity7Day({ data7Day, logs, cowId }) {
     ]
   };
 
+  const gridColor = theme === 'light' ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.05)';
+  const tickColor = theme === 'light' ? '#64748b' : '#94a3b8';
+
   const barChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     scales: {
-      x: { stacked: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-      y: { stacked: true, max: 24, grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#94a3b8' }, title: { display: true, text: 'Hours in Day', color: '#64748b' } }
+      x: { stacked: true, grid: { color: gridColor }, ticks: { color: tickColor } },
+      y: { stacked: true, max: 24, grid: { color: gridColor }, ticks: { color: tickColor }, title: { display: true, text: 'Hours in Day', color: tickColor } }
     },
     plugins: {
       legend: { position: 'top', labels: { color: '#cbd5e1', font: { size: 11 } } }
@@ -88,8 +91,8 @@ export default function Activity7Day({ data7Day, logs, cowId }) {
     responsive: true,
     maintainAspectRatio: false,
     scales: {
-      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-      y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#94a3b8' } }
+      x: { grid: { color: gridColor }, ticks: { color: tickColor } },
+      y: { min: 0, max: 100, grid: { color: gridColor }, ticks: { color: tickColor } }
     },
     plugins: { legend: { position: 'top', labels: { color: '#cbd5e1' } } }
   };

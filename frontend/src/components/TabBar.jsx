@@ -14,7 +14,7 @@ export default function TabBar({ activeTab, onSelectTab, onLogout, isOpen, onClo
       <div className={`sidebar-overlay ${isOpen ? 'open' : ''}`} onClick={onClose}></div>
       <nav className={`tab-bar ${isOpen ? 'open' : ''}`}>
       {/* Brand Section in Sidebar */}
-      <div className="brand-section" style={{ padding: '0.5rem 0 1.5rem 0', borderBottom: '1px solid var(--border-glass)', marginBottom: '1.5rem', gap: '1rem', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+      <div className="brand-section" style={{ position: 'relative', padding: '0.5rem 0 1.5rem 0', borderBottom: '1px solid var(--border-glass)', marginBottom: '1.5rem', gap: '1rem', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
         <div className="brand-logo" style={{ 
           width: '80px',
           height: '80px',

@@ -22,6 +22,20 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem('cow_theme') || 'dark');
+
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('light-theme');
+    } else {
+      document.documentElement.classList.remove('light-theme');
+    }
+    localStorage.setItem('cow_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
 
   // 1. Fetch initial cow list
   useEffect(() => {
@@ -124,7 +138,7 @@ export default function App() {
         // Manually refresh data
         fetch(`${API_BASE}/api/cow/${currentCowId}/current`)
           .then(r => r.json())
-          .then(d => { 
+          .then(d => {
             if (d.success) {
               setCurrentData(d);
               if (d.accelBuffer) setAccelBuffer(d.accelBuffer);
@@ -158,7 +172,7 @@ export default function App() {
       />
 
       {/* Main Content Column */}
-      <div className="main-column">
+      <div className="main-column" onClick={() => isSidebarOpen && setIsSidebarOpen(false)}>
         {/* Top Navbar */}
         <Navbar
           cows={cows}
@@ -166,6 +180,9 @@ export default function App() {
           onSelectCow={handleSelectCow}
           onTriggerDump={handleTriggerDump}
           onToggleMenu={() => setIsSidebarOpen(!isSidebarOpen)}
+          isSidebarOpen={isSidebarOpen}
+          theme={theme}
+          onToggleTheme={toggleTheme}
         />
 
         {/* Scrollable Content */}
@@ -182,6 +199,7 @@ export default function App() {
               data7Day={data7Day}
               logs={logs}
               cowId={currentCowId}
+              theme={theme}
             />
           )}
 
@@ -200,14 +218,14 @@ export default function App() {
               currentCowId={currentCowId}
               currentData={currentData}
               onReloadData={(id) => {
-              fetch(`${API_BASE}/api/cow/${id}/current`)
-                .then(r => r.json())
-                .then(d => { 
-                  if (d.success) {
-                    setCurrentData(d);
-                    if (d.accelBuffer) setAccelBuffer(d.accelBuffer);
-                  }
-                });
+                fetch(`${API_BASE}/api/cow/${id}/current`)
+                  .then(r => r.json())
+                  .then(d => {
+                    if (d.success) {
+                      setCurrentData(d);
+                      if (d.accelBuffer) setAccelBuffer(d.accelBuffer);
+                    }
+                  });
               }}
             />
           )}

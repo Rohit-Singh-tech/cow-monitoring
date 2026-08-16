@@ -282,7 +282,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
           <div className="card-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '260px' }}>
             <Doughnut data={pieData} options={pieOptions} />
           </div>
-          <div style={{ padding: '1.25rem', borderTop: '1px solid var(--primary-cyan)', background: 'rgba(0, 0, 0, 0.5)', textAlign: 'center' }}>
+          <div style={{ padding: '1.25rem', borderTop: '1px solid var(--primary-cyan)', background: 'var(--bg-panel)', textAlign: 'center' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontFamily: 'JetBrains Mono' }}>SYS: </span>
             <span style={{ fontWeight: 700, fontFamily: 'JetBrains Mono', color: 'var(--primary-emerald)', fontSize: '0.85rem' }}>CONTINUOUS DIAGNOSTICS OK</span>
           </div>
