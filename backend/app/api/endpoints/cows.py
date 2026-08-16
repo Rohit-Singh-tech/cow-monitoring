@@ -30,6 +30,7 @@ ACTIVITY_MAP = {
 
 # 5-second TTL cache for cloud DB queries
 _POINTS_CACHE = {}
+_VITALS_CACHE = {}
 
 def get_points_for_device(db: Session, device_id: str):
     """
@@ -83,7 +84,15 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
     Computes daily health parameters directly from database telemetry logging by running ML inference on a real sample of packets.
     """
     dev_id = str(cow.device_id)
+    cache_key = dev_id
+    now = time.time()
     
+    # 60 second cache to avoid blocking API with N+1 ML inferences
+    if cache_key in _VITALS_CACHE:
+        cached_time, data = _VITALS_CACHE[cache_key]
+        if now - cached_time < 60.0:
+            return data
+            
     # Query today's datalogger packets count from database
     today_sql = text("""
         SELECT COUNT(*) 
@@ -132,7 +141,7 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
         total_valid = 1
         counts["RES"] = 1
         
-    return {
+    result = {
         "today_pkts": today_pkts,
         "monitored_hours_today": monitored_hours_today,
         "rum_hrs": round(monitored_hours_today * (counts.get("RUS", 0) / total_valid), 1),
@@ -142,6 +151,9 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
         "heat_prob": int((counts.get("is_heat", 0) / total_valid) * 100),
         "is_heat": counts.get("is_heat", 0) > 0
     }
+    
+    _VITALS_CACHE[cache_key] = (now, result)
+    return result
 
 
 @router.get("", response_model=List[dict])
