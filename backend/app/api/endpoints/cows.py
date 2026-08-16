@@ -117,25 +117,38 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
         LIMIT 20
     """)
     headers = db.execute(sample_sql, {"dev": dev_id}).fetchall()
+    header_ids = [h[0] for h in headers]
     
     manager = get_ml_manager()
     counts = {"RUS": 0, "REL": 0, "FEP": 0, "FED": 0, "MOV": 0, "is_heat": 0}
     total_valid = 0
     
-    for h in headers:
-        hid = h[0]
-        pts_sql = text("SELECT x, y, z FROM datalogger_points WHERE header_id = :hid ORDER BY point_index ASC")
-        pts = db.execute(pts_sql, {"hid": hid}).fetchall()
-        x_b = [p[0] for p in pts if p[0] is not None]
-        y_b = [p[1] for p in pts if p[1] is not None]
-        z_b = [p[2] for p in pts if p[2] is not None]
-        if len(x_b) > 0:
-            pred = manager.predict(x_b, y_b, z_b)
-            code = pred["activity"]["code"]
-            counts[code] = counts.get(code, 0) + 1
-            if pred["heat_detection"]["in_heat"]:
-                counts["is_heat"] += 1
-            total_valid += 1
+    if header_ids:
+        # Fetch all points for the sampled headers in a SINGLE query to prevent N+1 DB pool exhaustion
+        all_pts = db.query(DataloggerPoint).filter(
+            DataloggerPoint.header_id.in_(header_ids)
+        ).order_by(DataloggerPoint.header_id, DataloggerPoint.point_index).all()
+        
+        # Group points by header_id
+        pts_by_header = {}
+        for p in all_pts:
+            if p.header_id not in pts_by_header:
+                pts_by_header[p.header_id] = []
+            pts_by_header[p.header_id].append(p)
+            
+        for hid in header_ids:
+            pts = pts_by_header.get(hid, [])
+            x_b = [p.x for p in pts if p.x is not None]
+            y_b = [p.y for p in pts if p.y is not None]
+            z_b = [p.z for p in pts if p.z is not None]
+            
+            if len(x_b) > 0:
+                pred = manager.predict(x_b, y_b, z_b)
+                code = pred["activity"]["code"]
+                counts[code] = counts.get(code, 0) + 1
+                if pred["heat_detection"]["in_heat"]:
+                    counts["is_heat"] += 1
+                total_valid += 1
             
     if total_valid == 0:
         total_valid = 1
