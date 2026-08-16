@@ -80,6 +80,23 @@ class MLModelManager:
             if os.path.exists(anomaly_model_path):
                 self.models_dict["anomaly_model"] = joblib.load(anomaly_model_path)
             
+            # Load baseline and threshold data
+            baseline_mean_path = os.path.join(model_path, "baseline_mean.pkl")
+            if os.path.exists(baseline_mean_path):
+                self.models_dict["baseline_mean"] = joblib.load(baseline_mean_path)
+
+            baseline_std_path = os.path.join(model_path, "baseline_std.pkl")
+            if os.path.exists(baseline_std_path):
+                self.models_dict["baseline_std"] = joblib.load(baseline_std_path)
+
+            anomaly_threshold_path = os.path.join(model_path, "anomaly_threshold.pkl")
+            if os.path.exists(anomaly_threshold_path):
+                self.models_dict["anomaly_threshold"] = float(joblib.load(anomaly_threshold_path))
+
+            deviation_threshold_path = os.path.join(model_path, "deviation_threshold.pkl")
+            if os.path.exists(deviation_threshold_path):
+                self.models_dict["deviation_threshold"] = float(joblib.load(deviation_threshold_path))
+
             self.is_loaded = True
             logger.info("Successfully loaded ML Activity, Heat, and Anomaly models into RAM.")
             return True
@@ -103,6 +120,20 @@ class MLModelManager:
                 act_encoder = self.models_dict.get("activity_encoder")
                 heat_model = self.models_dict.get("heat_model")
                 anomaly_model = self.models_dict.get("anomaly_model")
+                baseline_mean = self.models_dict.get("baseline_mean")
+                baseline_std = self.models_dict.get("baseline_std")
+                anomaly_threshold = self.models_dict.get("anomaly_threshold", -1e-8)
+                deviation_threshold = self.models_dict.get("deviation_threshold", 1.5)
+                
+                # Compute statistical deviation score if baselines are loaded
+                deviation_score = 0.0
+                is_deviating = False
+                if baseline_mean is not None and baseline_std is not None:
+                    # Avoid division by zero
+                    std_safe = np.where(baseline_std.values == 0, 1e-8, baseline_std.values)
+                    scaled_features = (features[0] - baseline_mean.values) / std_safe
+                    deviation_score = float(np.mean(np.abs(scaled_features)))
+                    is_deviating = bool(deviation_score > deviation_threshold)
                 
                 # Activity prediction
                 act_pred = act_model.predict(features)[0]
@@ -134,16 +165,18 @@ class MLModelManager:
                 # Anomaly prediction
                 anomaly_result = {"is_anomaly": False, "score": 0.0}
                 if anomaly_model is not None:
-                    # Isolation forest usually returns -1 for anomaly, 1 for normal
-                    anom_pred = anomaly_model.predict(features)[0]
-                    if hasattr(anomaly_model, "score_samples"):
-                        anom_score = float(anomaly_model.score_samples(features)[0])
+                    if hasattr(anomaly_model, "decision_function"):
+                        anom_score = float(anomaly_model.decision_function(features)[0])
                         anomaly_result["score"] = anom_score
-                    
-                    anomaly_result["is_anomaly"] = bool(anom_pred == -1)
+                        anomaly_result["is_anomaly"] = bool(anom_score < anomaly_threshold)
+                    else:
+                        anom_pred = anomaly_model.predict(features)[0]
+                        anomaly_result["is_anomaly"] = bool(anom_pred == -1)
+                        if hasattr(anomaly_model, "score_samples"):
+                            anomaly_result["score"] = float(anomaly_model.score_samples(features)[0])
                     
                 # Health-risk decision logic
-                if anomaly_result["is_anomaly"] or heat_alert == "HIGH":
+                if anomaly_result["is_anomaly"] or is_deviating or heat_alert == "HIGH":
                     health_risk = "HIGH_RISK"
                 elif activity_code == "OTHER_ACTIVITY" or heat_alert == "MODERATE":
                     health_risk = "MONITOR"
@@ -166,6 +199,11 @@ class MLModelManager:
                         "alert_level": heat_alert
                     },
                     "anomaly_detection": anomaly_result,
+                    "deviation_metrics": {
+                        "score": round(deviation_score, 4),
+                        "is_deviating": is_deviating,
+                        "threshold": round(deviation_threshold, 4)
+                    },
                     "health_risk_decision": health_risk,
                     "features_extracted_count": 67
                 }
@@ -198,6 +236,7 @@ class MLModelManager:
                 "alert_level": heat_alert
             },
             "anomaly_detection": {"is_anomaly": False, "score": 0.0},
+            "deviation_metrics": {"score": 0.0, "is_deviating": False, "threshold": 1.5},
             "health_risk_decision": health_risk,
             "features_extracted_count": 67
         }
