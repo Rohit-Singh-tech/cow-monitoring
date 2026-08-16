@@ -98,7 +98,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
 
   const latestT = currentData.liveTelemetry || { x: 0, y: 0, z: 0, magnitude: 0 };
   const anomalyScore = ml.anomaly_detection?.score || 0;
-  const confidence = (ml.activity?.confidence * 100) || 85.0;
+  const confidence = (ml.activity?.confidence * 100) || 0;
 
   return (
     <div>
