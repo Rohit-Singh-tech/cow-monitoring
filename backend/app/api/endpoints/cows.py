@@ -154,13 +154,14 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
         total_valid = 1
         counts["RES"] = 1
         
+    # Project current distribution over a full 24-hour period for daily targets
     result = {
         "today_pkts": today_pkts,
         "monitored_hours_today": monitored_hours_today,
-        "rum_hrs": round(monitored_hours_today * (counts.get("RUS", 0) / total_valid), 1),
-        "lying_hrs": round(monitored_hours_today * (counts.get("REL", 0) / total_valid), 1),
-        "feed_hrs": round(monitored_hours_today * ((counts.get("FEP", 0) + counts.get("FED", 0)) / total_valid), 1),
-        "move_hrs": round(monitored_hours_today * (counts.get("MOV", 0) / total_valid), 1),
+        "rum_hrs": round(24.0 * (counts.get("RUS", 0) / total_valid), 1),
+        "lying_hrs": round(24.0 * (counts.get("REL", 0) / total_valid), 1),
+        "feed_hrs": round(24.0 * ((counts.get("FEP", 0) + counts.get("FED", 0)) / total_valid), 1),
+        "move_hrs": round(24.0 * (counts.get("MOV", 0) / total_valid), 1),
         "heat_prob": int((counts.get("is_heat", 0) / total_valid) * 100),
         "is_heat": counts.get("is_heat", 0) > 0
     }
@@ -301,6 +302,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
             "icon": act_info["icon"]
         },
         "healthStatus": {
+            "monitoredHoursToday": health_meta["monitored_hours_today"],
             "ruminationHoursToday": health_meta["rum_hrs"],
             "lyingHoursToday": health_meta["lying_hrs"],
             "feedingHoursToday": health_meta["feed_hrs"],
@@ -355,7 +357,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     # we apply the cow's actual current distribution to its historical packet counts.
     # A fully productionized system would query an `ml_inferences` table.
     current_health = compute_health_vitals(db, cow)
-    total_h = current_health["monitored_hours_today"] or 1
+    total_h = 24.0
     rum_ratio = current_health["rum_hrs"] / total_h
     lying_ratio = current_health["lying_hrs"] / total_h
     feed_ratio = current_health["feed_hrs"] / total_h

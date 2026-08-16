@@ -276,7 +276,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
           <div className="card-header-box">
             <div className="card-title">
               <i className="fa-solid fa-chart-pie"></i>
-              24H BEHAVIOR MATRIX
+              24H BEHAVIOR MATRIX (PROJECTED)
             </div>
           </div>
           <div className="card-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '260px' }}>
