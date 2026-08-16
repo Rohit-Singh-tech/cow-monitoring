@@ -1,7 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump, onToggleMenu }) {
   const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef(null);
+  
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    }
+    if (showDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showDropdown]);
   
   const alertingCows = cows.filter(c => c.health_risk_decision === 'HIGH_RISK' || c.healthStatus === 'ESTRUS_ALERT');
   const alertCount = alertingCows.length;
@@ -41,7 +56,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
           T-MINUS {new Date().toLocaleTimeString('en-US', { hour12: false })}
         </div>
 
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative' }} ref={dropdownRef}>
           <button 
             className="status-pill" 
             style={{ 
@@ -64,6 +79,8 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
               top: '130%', 
               right: 0, 
               width: '320px', 
+              maxHeight: '60vh',
+              overflowY: 'auto',
               zIndex: 200,
               padding: '1.25rem',
               display: 'flex',
@@ -73,7 +90,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
               boxShadow: '0 0 25px rgba(255,0,60,0.4)',
               background: 'rgba(10, 5, 5, 0.95)'
             }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--danger-rose)', borderBottom: '1px solid rgba(255,0,60,0.3)', paddingBottom: '0.5rem', marginBottom: '0.25rem', fontFamily: 'Orbitron' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--danger-rose)', borderBottom: '1px solid rgba(255,0,60,0.3)', paddingBottom: '0.5rem', marginBottom: '0.25rem', fontFamily: 'Orbitron', position: 'sticky', top: 0, background: 'rgba(10, 5, 5, 0.95)', zIndex: 1 }}>
                 <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: '0.5rem' }}></i> ACTIVE ALERTS LOG
               </div>
               {alertingCows.map(c => (
