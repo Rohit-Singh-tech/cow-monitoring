@@ -101,18 +101,15 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
           AND timestamp >= CURRENT_DATE
     """)
     today_pkts = db.execute(today_sql, {"dev": dev_id}).scalar() or 0
-    if today_pkts == 0:
-        total_sql = text("SELECT COUNT(*) FROM datalogger_headers WHERE device_id = :dev")
-        total_pkts = db.execute(total_sql, {"dev": dev_id}).scalar() or 0
-        today_pkts = min(total_pkts, 150)
         
     monitored_hours_today = round((today_pkts * 8.0) / 3600.0, 2)
     
-    # Sample real packets from DB to get actual ML distribution
+    # Sample real packets from DB to get actual ML distribution FOR TODAY
     sample_sql = text("""
         SELECT id 
         FROM datalogger_headers
         WHERE device_id = :dev
+          AND timestamp >= CURRENT_DATE
         ORDER BY id DESC
         LIMIT 20
     """)
@@ -150,18 +147,21 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
                     counts["is_heat"] += 1
                 total_valid += 1
             
+    # If no data today, do not project fake hours
     if total_valid == 0:
-        total_valid = 1
-        counts["RES"] = 1
+        projection_multiplier = 0.0
+        total_valid = 1  # prevent division by zero
+    else:
+        projection_multiplier = 24.0
         
-    # Project current distribution over a full 24-hour period for daily targets
+    # Project current distribution over a full 24-hour period for daily targets (only if data exists)
     result = {
         "today_pkts": today_pkts,
         "monitored_hours_today": monitored_hours_today,
-        "rum_hrs": round(24.0 * (counts.get("RUS", 0) / total_valid), 1),
-        "lying_hrs": round(24.0 * (counts.get("REL", 0) / total_valid), 1),
-        "feed_hrs": round(24.0 * ((counts.get("FEP", 0) + counts.get("FED", 0)) / total_valid), 1),
-        "move_hrs": round(24.0 * (counts.get("MOV", 0) / total_valid), 1),
+        "rum_hrs": round(projection_multiplier * (counts.get("RUS", 0) / total_valid), 1),
+        "lying_hrs": round(projection_multiplier * (counts.get("REL", 0) / total_valid), 1),
+        "feed_hrs": round(projection_multiplier * ((counts.get("FEP", 0) + counts.get("FED", 0)) / total_valid), 1),
+        "move_hrs": round(projection_multiplier * (counts.get("MOV", 0) / total_valid), 1),
         "heat_prob": int((counts.get("is_heat", 0) / total_valid) * 100),
         "is_heat": counts.get("is_heat", 0) > 0
     }
