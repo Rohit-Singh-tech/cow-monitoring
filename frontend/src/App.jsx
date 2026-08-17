@@ -126,7 +126,7 @@ export default function App() {
         const data7 = await res7.json();
         if (data7.success) setData7Day(data7);
 
-        const resLogs = await fetch(`${API_BASE}/api/cow/${currentCowId}/activity-log`);
+        const resLogs = await fetch(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=50`);
         const dataLogs = await resLogs.json();
         if (dataLogs.success) setLogs(dataLogs.logs);
       } catch (err) {
