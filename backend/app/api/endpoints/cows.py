@@ -46,9 +46,7 @@ def get_points_for_device(db: Session, device_id: str):
     header_sql = text("""
         SELECT id, timestamp, total_packets, packet_id_num
         FROM datalogger_headers
-        WHERE device_id = :dev
-        ORDER BY id DESC
-        LIMIT 1
+        WHERE id = (SELECT MAX(id) FROM datalogger_headers WHERE device_id = :dev)
     """)
     header = db.execute(header_sql, {"dev": str(device_id)}).fetchone()
 
@@ -105,10 +103,12 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
     sample_sql = text("""
         SELECT id 
         FROM datalogger_headers
-        WHERE device_id = :dev
-          AND timestamp >= CURRENT_DATE
-        ORDER BY id DESC
-        LIMIT 20
+        WHERE id IN (
+            SELECT id FROM datalogger_headers 
+            WHERE device_id = :dev AND timestamp >= CURRENT_DATE 
+            ORDER BY id DESC 
+            LIMIT 20
+        )
     """)
     headers = db.execute(sample_sql, {"dev": dev_id}).fetchall()
     header_ids = [h[0] for h in headers]
@@ -363,7 +363,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     sql = text("""
         SELECT DATE(timestamp) as day_date, COUNT(*) as pkt_count
         FROM datalogger_headers
-        WHERE device_id = :dev
+        WHERE device_id = :dev AND timestamp >= datetime('now', '-7 days')
         GROUP BY DATE(timestamp)
         ORDER BY day_date DESC
         LIMIT 7
