@@ -37,10 +37,10 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
       RUS: data7Day.ruminationHours?.[idx] || 0,
       FEP: data7Day.feedingHours?.[idx] || 0,
       MOV: data7Day.activeHours?.[idx] || 0,
-      RES: 2.5, // Dummy values for missing fields to total ~24h
-      DRN: 1.0,
-      LCK: 0.5,
-      OTH: 0.5,
+      RES: data7Day.standingRestHours?.[idx] || 0,
+      DRN: data7Day.drinkingHours?.[idx] || 0,
+      LCK: data7Day.lickingHours?.[idx] || 0,
+      OTH: data7Day.otherHours?.[idx] || 0,
       healthScore: 90 + Math.random() * 8, // Dummy health score
       estrusIndex: 10 + Math.random() * 5  // Dummy estrus index
     }));

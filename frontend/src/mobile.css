@@ -1,4 +1,6 @@
 /* Mobile Responsive Styles */
+.custom-table th, .custom-table td { color: var(--text-main) !important; }
+
 @media (max-width: 1024px) {
   .grid-top-stats {
     grid-template-columns: repeat(3, 1fr) !important;

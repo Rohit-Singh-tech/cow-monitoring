@@ -2,10 +2,14 @@ import os
 import json
 import joblib
 import logging
+import warnings
 import numpy as np
 from typing import Dict, Any, List
 from app.config import settings
 from app.ml.feature_extractor import extract_67_features
+
+# Suppress sklearn UserWarning about feature names
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 logger = logging.getLogger("cow_logger.ml")
 
