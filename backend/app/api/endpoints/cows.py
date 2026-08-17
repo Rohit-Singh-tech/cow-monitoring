@@ -39,12 +39,14 @@ def _get_latest_inference_for_device(db: Session, device_id: str):
     Get the latest ML inference for a device by joining latest header to ml_inferences.
     Returns (header, inference) tuple. Both may be None.
     """
-    header = db.query(DataloggerHeader).filter(
+    max_id = db.query(func.max(DataloggerHeader.id)).filter(
         DataloggerHeader.device_id == str(device_id)
-    ).order_by(DataloggerHeader.id.desc()).first()
+    ).scalar()
     
-    if not header:
+    if not max_id:
         return None, None
+        
+    header = db.query(DataloggerHeader).filter(DataloggerHeader.id == max_id).first()
     
     inference = db.query(MLInference).filter(
         MLInference.header_id == header.id
@@ -57,9 +59,7 @@ def _get_latest_inference_for_device(db: Session, device_id: str):
                    m.heat_probability, m.health_risk_decision, m.anomaly_score
             FROM datalogger_headers h
             JOIN ml_inferences m ON h.id = m.header_id
-            WHERE h.device_id = :dev
-            ORDER BY h.id DESC
-            LIMIT 1
+            WHERE h.id = (SELECT MAX(id) FROM datalogger_headers WHERE device_id = :dev)
         """), {"dev": str(device_id)}).fetchone()
         
         if result:
