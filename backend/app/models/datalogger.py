@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, func, Boolean, Float
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -51,3 +51,16 @@ class DataloggerPoint(Base):
     z = Column(Integer, nullable=True)
 
     header = relationship("DataloggerHeader", back_populates="points")
+
+class MLInference(Base):
+    __tablename__ = "ml_inferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    header_id = Column(Integer, ForeignKey("datalogger_headers.id", ondelete="CASCADE"), unique=True, nullable=False)
+    activity_code = Column(String(10), nullable=False)
+    confidence = Column(Integer, nullable=False)
+    is_heat = Column(Boolean, default=False)
+    heat_probability = Column(Float, nullable=False, default=0.0)
+    health_risk_decision = Column(String(20), nullable=False, default="HEALTHY")
+    
+    header = relationship("DataloggerHeader", backref="ml_inference")
