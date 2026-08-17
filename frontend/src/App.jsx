@@ -73,9 +73,10 @@ export default function App() {
         .then(data => {
           if (isSubscribed && data.success && data.cows && data.cows.length > 0) {
             setCows(data.cows);
-            if (!currentCowId) {
-              setCurrentCowId(data.cows[0].id);
-            }
+            setCurrentCowId(prev => {
+              if (!prev) return data.cows[0].id;
+              return prev;
+            });
           }
         })
         .catch(err => console.error('Error fetching cows:', err));
