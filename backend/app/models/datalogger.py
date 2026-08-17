@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, func, Boolean, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, Date, JSON, ForeignKey, func, Boolean, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -64,3 +64,27 @@ class MLInference(Base):
     health_risk_decision = Column(String(20), nullable=False, default="HEALTHY")
     
     header = relationship("DataloggerHeader", backref="ml_inference")
+
+
+class DailyCowSummary(Base):
+    """Pre-aggregated daily health summary per cow. Updated by background worker."""
+    __tablename__ = "daily_cow_summaries"
+    __table_args__ = (
+        UniqueConstraint("device_id", "date", name="uq_device_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, index=True, nullable=False)
+    date = Column(Date, index=True, nullable=False)
+    total_packets = Column(Integer, default=0)
+    monitored_hours = Column(Float, default=0.0)
+    rumination_count = Column(Integer, default=0)
+    lying_count = Column(Integer, default=0)
+    feeding_count = Column(Integer, default=0)
+    moving_count = Column(Integer, default=0)
+    heat_count = Column(Integer, default=0)
+    rumination_hours = Column(Float, default=0.0)
+    lying_hours = Column(Float, default=0.0)
+    feeding_hours = Column(Float, default=0.0)
+    moving_hours = Column(Float, default=0.0)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

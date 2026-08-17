@@ -25,6 +25,12 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(typeof window !== 'undefined' ? window.innerWidth > 768 : true);
   const [theme, setTheme] = useState(localStorage.getItem('cow_theme') || 'dark');
 
+  // Refs to prevent concurrent fetches and implement error backoff
+  const cowsFetchingRef = useRef(false);
+  const liveFetchingRef = useRef(false);
+  const cowsErrorCountRef = useRef(0);
+  const liveErrorCountRef = useRef(0);
+
   useEffect(() => {
     if (theme === 'light') {
       document.documentElement.classList.add('light-theme');
@@ -62,35 +68,64 @@ export default function App() {
     }));
   };
 
-  // 1. Fetch and refresh cow list
+  // 1. Fetch cow list — poll every 60s (cow list rarely changes)
+  //    with error backoff: wait longer on consecutive failures
   useEffect(() => {
     if (!isAuthenticated) return;
     let isSubscribed = true;
 
-    const fetchCows = () => {
-      fetch(`${API_BASE}/api/cows`)
-        .then(res => res.json())
-        .then(data => {
-          if (isSubscribed && data.success && data.cows && data.cows.length > 0) {
-            setCows(data.cows);
-            setCurrentCowId(prev => {
-              if (!prev) return data.cows[0].id;
-              return prev;
-            });
-          }
-        })
-        .catch(err => console.error('Error fetching cows:', err));
+    const fetchCows = async () => {
+      // Skip if a fetch is already in-flight
+      if (cowsFetchingRef.current) return;
+      cowsFetchingRef.current = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/cows`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (isSubscribed && data.success && data.cows && data.cows.length > 0) {
+          setCows(data.cows);
+          setCurrentCowId(prev => {
+            if (!prev) return data.cows[0].id;
+            return prev;
+          });
+          cowsErrorCountRef.current = 0; // Reset on success
+        }
+      } catch (err) {
+        console.error('Error fetching cows:', err);
+        cowsErrorCountRef.current += 1;
+      } finally {
+        cowsFetchingRef.current = false;
+      }
     };
 
     fetchCows();
 
-    const interval = setInterval(fetchCows, 10000);
+    // Dynamic interval: 60s normal, back off on errors (max 5 min)
+    const getInterval = () => {
+      const errorCount = cowsErrorCountRef.current;
+      if (errorCount === 0) return 60000;     // 60s normal
+      if (errorCount < 3) return 60000;        // Still 60s for first few errors
+      return Math.min(errorCount * 30000, 300000); // 30s per error, max 5 min
+    };
+
+    // Use a recursive setTimeout for dynamic intervals
+    let timeoutId;
+    const scheduleNext = () => {
+      timeoutId = setTimeout(async () => {
+        await fetchCows();
+        if (isSubscribed) scheduleNext();
+      }, getInterval());
+    };
+    scheduleNext();
+
     return () => {
       isSubscribed = false;
-      clearInterval(interval);
+      clearTimeout(timeoutId);
     };
-  }, [isAuthenticated, activeTab]);
+  }, [isAuthenticated]); // Removed activeTab — no need to refetch cow list on tab change
 
+  // 2. Load individual cow data when cow selection changes
   useEffect(() => {
     if (!currentCowId || !isAuthenticated) return;
     let isSubscribed = true;
@@ -98,6 +133,7 @@ export default function App() {
     const loadCowData = async (cowId) => {
       try {
         const resCurr = await fetch(`${API_BASE}/api/cow/${cowId}/current`);
+        if (!resCurr.ok) throw new Error(`HTTP ${resCurr.status}`);
         const dataCurr = await resCurr.json();
         if (isSubscribed && dataCurr.success) {
           setCurrentData(dataCurr);
@@ -137,32 +173,60 @@ export default function App() {
     fetch7Day();
   }, [currentCowId, activeTab, isAuthenticated]);
 
-  // 3. Real-time Telemetry Stream Loop (5s interval)
+  // 3. Real-time Telemetry Stream Loop (15s interval, with in-flight guard + error backoff)
   useEffect(() => {
     if (!currentCowId || activeTab !== 'live' || !isAuthenticated) return;
 
     let isSubscribed = true;
-    const timer = setInterval(async () => {
+
+    const fetchLive = async () => {
+      if (liveFetchingRef.current) return;
+      liveFetchingRef.current = true;
+
       try {
         const res = await fetch(`${API_BASE}/api/cow/${currentCowId}/current`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (isSubscribed && data.success) {
           if (data.accelBuffer) setAccelBuffer(data.accelBuffer);
           setCurrentData(data);
           syncCowIntoList(data);
+          liveErrorCountRef.current = 0;
         }
-      } catch (e) { }
-    }, 5000);
+      } catch (e) {
+        liveErrorCountRef.current += 1;
+      } finally {
+        liveFetchingRef.current = false;
+      }
+    };
+
+    // Dynamic interval: 15s normal, back off on errors
+    const getInterval = () => {
+      const errorCount = liveErrorCountRef.current;
+      if (errorCount === 0) return 15000;       // 15s normal
+      if (errorCount < 3) return 30000;          // 30s on first few errors
+      return Math.min(errorCount * 30000, 300000); // Max 5 min
+    };
+
+    let timeoutId;
+    const scheduleNext = () => {
+      timeoutId = setTimeout(async () => {
+        await fetchLive();
+        if (isSubscribed) scheduleNext();
+      }, getInterval());
+    };
+    scheduleNext();
 
     return () => {
       isSubscribed = false;
-      clearInterval(timer);
+      clearTimeout(timeoutId);
     };
   }, [currentCowId, activeTab, isAuthenticated]);
 
   const handleSelectCow = (id) => {
     setCurrentCowId(id);
     setAccelBuffer({ x: [], y: [], z: [], mag: [], labels: [] });
+    liveErrorCountRef.current = 0; // Reset error backoff on cow switch
   };
 
   const handleTriggerDump = async () => {

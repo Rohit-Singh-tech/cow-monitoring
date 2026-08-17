@@ -14,8 +14,10 @@ class UserCreateRequest(BaseModel):
     password: str
 
 class TagCreateRequest(BaseModel):
-    mac_address: str
-    animal_id: str
+    device_id: str
+    name: str
+    breed: str = None
+    location: str = None
     description: str = None
 
 @router.get("/users")
@@ -53,15 +55,16 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 
 @router.post("/tags")
 def create_tag(request: TagCreateRequest, db: Session = Depends(get_db)):
-    existing_tag = db.query(TagRegistry).filter((TagRegistry.mac_address == request.mac_address) | (TagRegistry.animal_id == request.animal_id)).first()
+    existing_tag = db.query(TagRegistry).filter(TagRegistry.device_id == request.device_id).first()
     if existing_tag:
-        raise HTTPException(status_code=400, detail="MAC Address or Animal ID already registered")
+        raise HTTPException(status_code=400, detail="Device ID already registered")
     
     new_tag = TagRegistry(
-        mac_address=request.mac_address,
-        animal_id=request.animal_id,
-        description=request.description,
-        is_active=True
+        device_id=request.device_id,
+        name=request.name,
+        breed=request.breed,
+        location=request.location,
+        notes=request.description
     )
     db.add(new_tag)
     db.commit()

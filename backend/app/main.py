@@ -1,15 +1,20 @@
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 import logging
 
 from app.config import settings
-from app.database import engine, Base
+from app.database import engine, Base, get_db
 from app.ml.model_loader import get_ml_manager
+from app.ml.worker import run_inference_loop
 from app.api.endpoints import ingest_router, cows_router, hardware_router, auth_router
 from app.api.endpoints.admin_api import router as admin_api_router
 from app.api.endpoints.config import router as config_router
+from app.api.endpoints.cows import get_herd_overview, get_cow_live_dashboard, get_cow_7day_activity
 
 from sqladmin import Admin
 from app.admin import AdminAuth, UserAdmin, TagRegistryAdmin, RawPacketAdmin, DataloggerHeaderAdmin, ActivityConfigAdmin
@@ -54,7 +59,19 @@ async def lifespan(app: FastAPI):
         
     ml_mgr = get_ml_manager()
     logger.info(f"ML Manager loaded status: {ml_mgr.is_loaded}")
+    
+    # Start background ML inference worker
+    worker_task = asyncio.create_task(run_inference_loop())
+    logger.info("Background ML inference worker started.")
+    
     yield
+    
+    # Shutdown: cancel worker
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Shutting down Cow Logger backend service.")
 
 app = FastAPI(
@@ -115,11 +132,10 @@ app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_api_router, prefix="/api/admin", tags=["Admin Management"])
 app.include_router(config_router, prefix="/api/config", tags=["Configuration"])
 
-# Legacy / Frontend Compatibility Endpoints
-from fastapi import Depends
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app.api.endpoints.cows import get_herd_overview, get_cow_live_dashboard, get_cow_7day_activity
+
+# ─── Legacy / Frontend Compatibility Endpoints ────────────────────────────────
+# These thin wrappers call the fast, pre-computed implementations from cows.py
+
 
 @app.get("/api/cows", tags=["Frontend Compatibility"])
 def api_get_cows(db: Session = Depends(get_db)):
@@ -138,12 +154,10 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
 def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
+    """Activity log using pre-computed ML inferences — no live ML."""
     from app.models.tag_registry import TagRegistry
-    from app.models.datalogger import DataloggerHeader
+    from app.models.datalogger import DataloggerHeader, MLInference
     from app.models.ui_parameter import ActivityConfig
-    from sqlalchemy import text
-    from datetime import datetime, timedelta, timezone
-    import concurrent.futures
     
     if str(cow_id).isdigit():
         cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
@@ -152,41 +166,38 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
         
     dev_id = cow.device_id if cow else str(cow_id)
     
+    # Get paginated headers with their pre-computed ML inferences in ONE query
     headers = db.query(DataloggerHeader).filter(
         DataloggerHeader.device_id == str(dev_id)
     ).order_by(DataloggerHeader.timestamp.desc()).offset((page - 1) * limit).limit(limit).all()
     
     if not headers:
         return {"success": True, "logs": [], "page": page, "limit": limit}
-        
-    manager = get_ml_manager()
-    configs = db.query(ActivityConfig).all()
-    ACTIVITY_MAP = {cfg.code: {"name": cfg.name, "color": cfg.color, "category": cfg.category} for cfg in configs}
     
+    # Batch fetch ML inferences for all headers
     header_ids = [h.id for h in headers]
-    points_sql = text(f"SELECT header_id, x, y, z FROM datalogger_points WHERE header_id IN ({','.join(map(str, header_ids))}) ORDER BY header_id, point_index ASC")
-    all_pts = db.execute(points_sql).fetchall()
+    inferences = db.query(MLInference).filter(
+        MLInference.header_id.in_(header_ids)
+    ).all()
+    inf_by_header = {inf.header_id: inf for inf in inferences}
     
-    pts_by_header = {hid: [] for hid in header_ids}
-    for p in all_pts:
-        pts_by_header[p[0]].append(p)
+    # Get activity config for display
+    configs = db.query(ActivityConfig).all()
+    ACTIVITY_CFG = {cfg.code: {"name": cfg.name, "color": cfg.color, "category": cfg.category} for cfg in configs}
     
-    def process_header(h):
-        pts = pts_by_header.get(h.id, [])
-        if len(pts) > 0:
-            x_buf = [p[1] for p in pts]
-            y_buf = [p[2] for p in pts]
-            z_buf = [p[3] for p in pts]
-            ml_pred = manager.predict(x_buf, y_buf, z_buf)
-            act_code = ml_pred["activity"]["code"]
-            conf = int(ml_pred["activity"]["confidence"] * 100) if "confidence" in ml_pred["activity"] else 85
+    logs = []
+    for h in headers:
+        inf = inf_by_header.get(h.id)
+        if inf:
+            act_code = inf.activity_code
+            conf = inf.confidence or 85
         else:
             act_code = "RES"
             conf = 80
             
-        act_info = ACTIVITY_MAP.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
+        act_info = ACTIVITY_CFG.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
         
-        return {
+        logs.append({
             "logId": h.id,
             "startTime": h.timestamp.isoformat() if h.timestamp else "",
             "endTime": h.timestamp.isoformat() if h.timestamp else "",
@@ -198,10 +209,7 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
             "confidencePercent": conf,
             "startPacketId": f"P-{h.packet_id_num}",
             "endPacketId": f"P-{h.packet_id_num}"
-        }
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        logs = list(executor.map(process_header, headers))
+        })
         
     return {
         "success": True,
@@ -216,4 +224,3 @@ def api_trigger_ble_dump(payload: dict = {}):
         "success": True,
         "message": "Authorized Knock-Knock Trigger (0x59 0x00 0xBB 0xCC) sent. Replaying 2,500 SPI Flash packets."
     }
-
