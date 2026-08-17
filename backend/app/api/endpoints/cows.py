@@ -103,12 +103,10 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
     sample_sql = text("""
         SELECT id 
         FROM datalogger_headers
-        WHERE id IN (
-            SELECT id FROM datalogger_headers 
-            WHERE device_id = :dev AND timestamp >= CURRENT_DATE 
-            ORDER BY id DESC 
-            LIMIT 20
-        )
+        WHERE device_id = :dev
+          AND timestamp >= CURRENT_DATE
+        ORDER BY id DESC
+        LIMIT 20
     """)
     headers = db.execute(sample_sql, {"dev": dev_id}).fetchall()
     header_ids = [h[0] for h in headers]
