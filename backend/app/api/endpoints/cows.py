@@ -130,14 +130,23 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
                 pts_by_header[p.header_id] = []
             pts_by_header[p.header_id].append(p)
             
-        for hid in header_ids:
+        import concurrent.futures
+        
+        def run_ml(hid):
             pts = pts_by_header.get(hid, [])
             x_b = [p.x for p in pts if p.x is not None]
             y_b = [p.y for p in pts if p.y is not None]
             z_b = [p.z for p in pts if p.z is not None]
             
             if len(x_b) > 0:
-                pred = manager.predict(x_b, y_b, z_b)
+                return manager.predict(x_b, y_b, z_b)
+            return None
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            preds = list(executor.map(run_ml, header_ids))
+            
+        for pred in preds:
+            if pred:
                 code = pred["activity"]["code"]
                 counts[code] = counts.get(code, 0) + 1
                 if pred["heat_detection"]["in_heat"]:

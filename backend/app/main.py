@@ -137,12 +137,13 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
     return {"success": True, **data_7day}
 
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
-def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
+def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
     from app.models.tag_registry import TagRegistry
     from app.models.datalogger import DataloggerHeader
     from app.models.ui_parameter import ActivityConfig
     from sqlalchemy import text
     from datetime import datetime, timedelta, timezone
+    import concurrent.futures
     
     if str(cow_id).isdigit():
         cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
@@ -151,51 +152,31 @@ def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
         
     dev_id = cow.device_id if cow else str(cow_id)
     
-    now = datetime.now(timezone.utc)
-    day_ago = now - timedelta(hours=24)
-    
     headers = db.query(DataloggerHeader).filter(
-        DataloggerHeader.device_id == str(dev_id),
-        DataloggerHeader.timestamp >= day_ago
-    ).order_by(DataloggerHeader.timestamp.asc()).all()
+        DataloggerHeader.device_id == str(dev_id)
+    ).order_by(DataloggerHeader.timestamp.desc()).offset((page - 1) * limit).limit(limit).all()
     
     if not headers:
-        return {"success": True, "logs": []}
+        return {"success": True, "logs": [], "page": page, "limit": limit}
         
-    num_chunks = min(len(headers), 8)
-    chunk_size = len(headers) // num_chunks if num_chunks > 0 else 1
-    
     manager = get_ml_manager()
     configs = db.query(ActivityConfig).all()
     ACTIVITY_MAP = {cfg.code: {"name": cfg.name, "color": cfg.color, "category": cfg.category} for cfg in configs}
     
-    logs = []
+    header_ids = [h.id for h in headers]
+    points_sql = text(f"SELECT header_id, x, y, z FROM datalogger_points WHERE header_id IN ({','.join(map(str, header_ids))}) ORDER BY header_id, point_index ASC")
+    all_pts = db.execute(points_sql).fetchall()
     
-    for i in range(num_chunks):
-        start_idx = i * chunk_size
-        end_idx = (i + 1) * chunk_size - 1 if i < num_chunks - 1 else len(headers) - 1
-        
-        chunk_headers = headers[start_idx:end_idx+1]
-        if not chunk_headers:
-            continue
-            
-        start_h = chunk_headers[0]
-        end_h = chunk_headers[-1]
-        
-        if start_h.timestamp and end_h.timestamp:
-            dur_mins = int((end_h.timestamp - start_h.timestamp).total_seconds() / 60.0)
-        else:
-            dur_mins = 1
-        if dur_mins < 1:
-            dur_mins = 1
-            
-        points_sql = text("SELECT x, y, z FROM datalogger_points WHERE header_id = :hid ORDER BY point_index ASC")
-        pts = db.execute(points_sql, {"hid": start_h.id}).fetchall()
-        
+    pts_by_header = {hid: [] for hid in header_ids}
+    for p in all_pts:
+        pts_by_header[p[0]].append(p)
+    
+    def process_header(h):
+        pts = pts_by_header.get(h.id, [])
         if len(pts) > 0:
-            x_buf = [p[0] for p in pts]
-            y_buf = [p[1] for p in pts]
-            z_buf = [p[2] for p in pts]
+            x_buf = [p[1] for p in pts]
+            y_buf = [p[2] for p in pts]
+            z_buf = [p[3] for p in pts]
             ml_pred = manager.predict(x_buf, y_buf, z_buf)
             act_code = ml_pred["activity"]["code"]
             conf = int(ml_pred["activity"]["confidence"] * 100) if "confidence" in ml_pred["activity"] else 85
@@ -205,25 +186,28 @@ def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
             
         act_info = ACTIVITY_MAP.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
         
-        logs.append({
-            "logId": start_h.id,
-            "startTime": start_h.timestamp.isoformat() if start_h.timestamp else "",
-            "endTime": end_h.timestamp.isoformat() if end_h.timestamp else "",
-            "durationMinutes": dur_mins,
+        return {
+            "logId": h.id,
+            "startTime": h.timestamp.isoformat() if h.timestamp else "",
+            "endTime": h.timestamp.isoformat() if h.timestamp else "",
+            "durationMinutes": 1,
             "activityCode": act_code,
             "activityName": act_info["name"],
             "color": act_info["color"],
             "category": act_info["category"],
             "confidencePercent": conf,
-            "startPacketId": f"P-{start_h.packet_id_num}",
-            "endPacketId": f"P-{end_h.packet_id_num}"
-        })
-        
-    logs.reverse()
+            "startPacketId": f"P-{h.packet_id_num}",
+            "endPacketId": f"P-{h.packet_id_num}"
+        }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        logs = list(executor.map(process_header, headers))
         
     return {
         "success": True,
-        "logs": logs
+        "logs": logs,
+        "page": page,
+        "limit": limit
     }
 
 @app.post("/api/ble/trigger-dump", tags=["Frontend Compatibility"])
