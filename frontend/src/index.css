@@ -942,6 +942,7 @@ body {
   z-index: 9999;
   display: flex;
   justify-content: flex-end;
+  align-items: flex-start;
   padding: 60px 1.5rem 1.5rem;
   animation: fadeInAlert 0.2s ease-out;
 }
