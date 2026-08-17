@@ -274,10 +274,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
                 "heat_probability": inference.heat_probability or 0.0,
                 "alert_level": heat_alert
             },
-            "anomaly_detection": {
-                "is_anomaly": inference.is_anomaly if hasattr(inference, "is_anomaly") else False, 
-                "score": inference.anomaly_score if hasattr(inference, "anomaly_score") else 0.0
-            },
+            "anomaly_detection": {"is_anomaly": False, "score": 0.0},
             "deviation_metrics": {"score": 0.0, "is_deviating": False, "threshold": 1.5},
             "health_risk_decision": inference.health_risk_decision or "HEALTHY",
             "features_extracted_count": 67
@@ -298,11 +295,9 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         lying_hrs = 0.0
         feed_hrs = 0.0
         move_hrs = 0.0
-        health_risk = health["health_risk"]
-        is_heat = health["is_heat"]
-        heat_prob_pct = health["heat_prob_pct"]
-        is_anomaly = inference.is_anomaly if hasattr(inference, "is_anomaly") else False
-        anomaly_score = inference.anomaly_score if hasattr(inference, "anomaly_score") else 0.0
+        health_risk = "NO_DATA"
+        is_heat = False
+        heat_prob_pct = 0
         act_code = None
         act_info = ACTIVITY_MAP.get("RES")
     else:
@@ -314,8 +309,6 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         health_risk = health["health_risk"]
         is_heat = health["is_heat"]
         heat_prob_pct = health["heat_prob_pct"]
-        is_anomaly = inference.is_anomaly if hasattr(inference, "is_anomaly") else False
-        anomaly_score = inference.anomaly_score if hasattr(inference, "anomaly_score") else 0.0
         act_code = health["act_code"]
         act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
 
@@ -324,8 +317,8 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         ml_res = {
             "ml_engine_status": "NO_DATA",
             "activity": {"code": act_code, "confidence": 0.0, "primary_activity": act_code},
-            "heat_detection": {"in_heat": is_heat, "heat_probability": heat_prob_pct, "alert_level": "LOW"},
-            "anomaly_detection": {"is_anomaly": is_anomaly, "score": anomaly_score},
+            "heat_detection": {"in_heat": False, "heat_probability": 0.0, "alert_level": "LOW"},
+            "anomaly_detection": {"is_anomaly": False, "score": 0.0},
             "deviation_metrics": {"is_deviating": False},
             "health_risk_decision": health_risk
         }

@@ -148,9 +148,9 @@ class MLModelManager:
                 else:
                     activity_code = str(act_pred)
                     
-                # Map BMW to ETC explicitly to keep 3-letter codes consistent
+                # Map ETC/BMW to OTHER_ACTIVITY explicitly
                 if activity_code in ["ETC", "BMW"]:
-                    activity_code = "ETC"
+                    activity_code = "OTHER_ACTIVITY"
                     
                 activity_prob = float(np.max(act_probs))
                 activity_desc = ACTIVITY_DESCRIPTIONS.get(activity_code, activity_code)
@@ -182,7 +182,7 @@ class MLModelManager:
                 # Health-risk decision logic
                 if anomaly_result["is_anomaly"] or is_deviating or heat_alert == "HIGH":
                     health_risk = "HIGH_RISK"
-                elif activity_code == "ETC" or heat_alert == "MODERATE":
+                elif activity_code == "OTHER_ACTIVITY" or heat_alert == "MODERATE":
                     health_risk = "MONITOR"
                 else:
                     health_risk = "HEALTHY"

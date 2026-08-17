@@ -62,8 +62,6 @@ class MLInference(Base):
     is_heat = Column(Boolean, default=False)
     heat_probability = Column(Float, nullable=False, default=0.0)
     health_risk_decision = Column(String(20), nullable=False, default="HEALTHY")
-    is_anomaly = Column(Boolean, default=False)
-    anomaly_score = Column(Float, nullable=False, default=0.0)
     
     header = relationship("DataloggerHeader", backref="ml_inference")
 

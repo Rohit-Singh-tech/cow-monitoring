@@ -942,7 +942,6 @@ body {
   z-index: 9999;
   display: flex;
   justify-content: flex-end;
-  align-items: flex-start;
   padding: 60px 1.5rem 1.5rem;
   animation: fadeInAlert 0.2s ease-out;
 }
@@ -1568,14 +1567,6 @@ body {
   }
   .navbar {
     padding: 0.5rem 1rem;
-    gap: 0.5rem;
-  }
-  .navbar-title {
-    display: none; /* Hide title on small screens to save space */
-  }
-  .header-controls .status-pill.online,
-  .header-controls > div:nth-child(3) /* The Clock */ {
-    display: none; /* Hide non-essentials */
   }
   .main-content {
     padding: 1rem;
@@ -1586,22 +1577,10 @@ body {
   .hero-status-card {
     flex-direction: column;
     align-items: flex-start;
-    gap: 1rem;
-  }
-  .cow-profile-header {
-    flex-direction: column;
-    align-items: flex-start;
   }
   .current-activity-box {
     text-align: left;
     align-items: flex-start;
-    width: 100%;
-    border-top: 1px solid var(--border-subtle);
-    padding-top: 1rem;
-  }
-  .alerts-popover-card {
-    width: 100%;
-    margin-top: 10px;
   }
 }
 
@@ -1612,12 +1591,5 @@ body {
   .cow-meta-badges {
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.35rem;
-  }
-  .cow-select-label {
-    display: none;
-  }
-  .header-controls .btn-secondary {
-    display: none; /* Hide export logs on tiny screens */
   }
 }
