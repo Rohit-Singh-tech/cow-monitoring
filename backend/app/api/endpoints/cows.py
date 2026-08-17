@@ -359,20 +359,16 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
         
     dev_id = cow.device_id if cow else str(cow_id)
-    from sqlalchemy import func
-    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
     
-    rows = db.query(
-        func.date(DataloggerHeader.timestamp).label('day_date'),
-        func.count(DataloggerHeader.id).label('pkt_count')
-    ).filter(
-        DataloggerHeader.device_id == str(dev_id),
-        DataloggerHeader.timestamp >= seven_days_ago
-    ).group_by(
-        func.date(DataloggerHeader.timestamp)
-    ).order_by(
-        func.date(DataloggerHeader.timestamp).desc()
-    ).limit(7).all()
+    sql = text("""
+        SELECT DATE(timestamp) as day_date, COUNT(*) as pkt_count
+        FROM datalogger_headers
+        WHERE device_id = :dev
+        GROUP BY DATE(timestamp)
+        ORDER BY day_date DESC
+        LIMIT 7
+    """)
+    rows = db.execute(sql, {"dev": str(dev_id)}).fetchall()
     
     # We don't have historical ML inferences saved, so for a purely data-driven approach
     # we apply the cow's actual current distribution to its historical packet counts.

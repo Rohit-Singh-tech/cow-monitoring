@@ -154,12 +154,10 @@ def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(hours=24)
     
-    headers = db.execute(text("""
-        SELECT id, timestamp, packet_id_num 
-        FROM datalogger_headers 
-        WHERE device_id = :dev AND timestamp >= :day_ago
-        ORDER BY timestamp ASC
-    """), {"dev": str(dev_id), "day_ago": day_ago}).fetchall()
+    headers = db.query(DataloggerHeader).filter(
+        DataloggerHeader.device_id == str(dev_id),
+        DataloggerHeader.timestamp >= day_ago
+    ).order_by(DataloggerHeader.timestamp.asc()).all()
     
     if not headers:
         return {"success": True, "logs": []}
@@ -184,29 +182,15 @@ def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
         start_h = chunk_headers[0]
         end_h = chunk_headers[-1]
         
-        # start_h is (id, timestamp, packet_id_num)
-        start_ts = start_h[1]
-        end_ts = end_h[1]
-        
-        if start_ts and end_ts:
-            # Handle string parsing if SQLite returns string
-            if isinstance(start_ts, str):
-                try:
-                    start_ts = datetime.fromisoformat(start_ts)
-                    end_ts = datetime.fromisoformat(end_ts)
-                except ValueError:
-                    pass
-            if isinstance(start_ts, datetime):
-                dur_mins = int((end_ts - start_ts).total_seconds() / 60.0)
-            else:
-                dur_mins = 1
+        if start_h.timestamp and end_h.timestamp:
+            dur_mins = int((end_h.timestamp - start_h.timestamp).total_seconds() / 60.0)
         else:
             dur_mins = 1
         if dur_mins < 1:
             dur_mins = 1
             
         points_sql = text("SELECT x, y, z FROM datalogger_points WHERE header_id = :hid ORDER BY point_index ASC")
-        pts = db.execute(points_sql, {"hid": start_h[0]}).fetchall()
+        pts = db.execute(points_sql, {"hid": start_h.id}).fetchall()
         
         if len(pts) > 0:
             x_buf = [p[0] for p in pts]
@@ -221,22 +205,18 @@ def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
             
         act_info = ACTIVITY_MAP.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
         
-        # Ensure timestamp serialization
-        st_iso = start_ts.isoformat() if isinstance(start_ts, datetime) else str(start_ts)
-        et_iso = end_ts.isoformat() if isinstance(end_ts, datetime) else str(end_ts)
-        
         logs.append({
-            "logId": start_h[0],
-            "startTime": st_iso,
-            "endTime": et_iso,
+            "logId": start_h.id,
+            "startTime": start_h.timestamp.isoformat() if start_h.timestamp else "",
+            "endTime": end_h.timestamp.isoformat() if end_h.timestamp else "",
             "durationMinutes": dur_mins,
             "activityCode": act_code,
             "activityName": act_info["name"],
             "color": act_info["color"],
             "category": act_info["category"],
             "confidencePercent": conf,
-            "startPacketId": f"P-{start_h[2]}",
-            "endPacketId": f"P-{end_h[2]}"
+            "startPacketId": f"P-{start_h.packet_id_num}",
+            "endPacketId": f"P-{end_h.packet_id_num}"
         })
         
     logs.reverse()
