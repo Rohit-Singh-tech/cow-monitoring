@@ -11,6 +11,7 @@ import {
   Legend
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
+import { useConfig } from '../context/ConfigContext';
 
 ChartJS.register(
   CategoryScale,
@@ -24,6 +25,7 @@ ChartJS.register(
 );
 
 export default function Activity7Day({ data7Day, logs, cowId, theme }) {
+  const { activities } = useConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
 
@@ -71,12 +73,12 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
   const barChartData = {
     labels: labels,
     datasets: [
-      { label: 'REL (Lying Rest)', data: history.map(d => d.REL), backgroundColor: '#8B5CF6', borderRadius: 4 },
-      { label: 'RUS (Rumination)', data: history.map(d => d.RUS), backgroundColor: '#06B6D4', borderRadius: 4 },
-      { label: 'FEP (Feeding)', data: history.map(d => d.FEP), backgroundColor: '#10B981', borderRadius: 4 },
-      { label: 'MOV (Moving / Active)', data: history.map(d => d.MOV), backgroundColor: '#F59E0B', borderRadius: 4 },
-      { label: 'RES (Standing Rest)', data: history.map(d => d.RES), backgroundColor: '#64748B', borderRadius: 4 },
-      { label: 'DRN / Other', data: history.map(d => +( (d.DRN || 0) + (d.LCK || 0) + (d.OTH || 0) ).toFixed(1)), backgroundColor: '#3B82F6', borderRadius: 4 }
+      { label: `REL (${activities?.REL?.name || 'Lying Rest'})`, data: history.map(d => d.REL), backgroundColor: activities?.REL?.color || '#8B5CF6', borderRadius: 4 },
+      { label: `RUS (${activities?.RUS?.name || 'Rumination'})`, data: history.map(d => d.RUS), backgroundColor: activities?.RUS?.color || '#06B6D4', borderRadius: 4 },
+      { label: `FEP (${activities?.FEP?.name || 'Feeding'})`, data: history.map(d => d.FEP), backgroundColor: activities?.FEP?.color || '#10B981', borderRadius: 4 },
+      { label: `MOV (${activities?.MOV?.name || 'Active'})`, data: history.map(d => d.MOV), backgroundColor: activities?.MOV?.color || '#F59E0B', borderRadius: 4 },
+      { label: `RES (${activities?.RES?.name || 'Standing Rest'})`, data: history.map(d => d.RES), backgroundColor: activities?.RES?.color || '#64748B', borderRadius: 4 },
+      { label: `DRN / Other`, data: history.map(d => +( (d.DRN || 0) + (d.LCK || 0) + (d.OTH || 0) ).toFixed(1)), backgroundColor: activities?.DRN?.color || '#3B82F6', borderRadius: 4 }
     ]
   };
 

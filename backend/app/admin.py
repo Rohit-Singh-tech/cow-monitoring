@@ -8,7 +8,7 @@ from app.database import SessionLocal
 from app.models.user import User
 from app.models.tag_registry import TagRegistry
 from app.models.datalogger import RawPacket, SensorPacket, DataloggerHeader
-
+from app.models.ui_parameter import ActivityConfig
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
@@ -86,3 +86,10 @@ class DataloggerHeaderAdmin(ModelView, model=DataloggerHeader):
     name = "Data Header"
     name_plural = "Data Headers"
     icon = "fa-solid fa-database"
+
+class ActivityConfigAdmin(ModelView, model=ActivityConfig):
+    column_list = [ActivityConfig.id, ActivityConfig.code, ActivityConfig.name, ActivityConfig.color, ActivityConfig.category]
+    column_searchable_list = [ActivityConfig.code, ActivityConfig.name]
+    name = "Activity Config"
+    name_plural = "Activity Configs"
+    icon = "fa-solid fa-palette"

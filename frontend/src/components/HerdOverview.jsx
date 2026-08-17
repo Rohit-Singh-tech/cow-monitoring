@@ -1,23 +1,8 @@
 import React, { useState } from 'react';
-
-const ACTIVITY_CLASSES = {
-  RES: { code: 'RES', name: 'Resting in standing position', color: '#64748B', icon: 'fa-pause' },
-  RUS: { code: 'RUS', name: 'Ruminating in standing position', color: '#06B6D4', icon: 'fa-arrows-spin' },
-  MOV: { code: 'MOV', name: 'Moving / Active', color: '#F59E0B', icon: 'fa-person-walking' },
-  FEP: { code: 'FEP', name: 'Feeding in Pot', color: '#10B981', icon: 'fa-bowl-food' },
-  FED: { code: 'FED', name: 'Feeding', color: '#10B981', icon: 'fa-bowl-food' },
-  GRZ: { code: 'GRZ', name: 'Grazing Field', color: '#10B981', icon: 'fa-wheat-awn' },
-  DRN: { code: 'DRN', name: 'Drinking Water', color: '#0EA5E9', icon: 'fa-glass-water' },
-  LCK: { code: 'LCK', name: 'Licking', color: '#EC4899', icon: 'fa-hand-sparkles' },
-  REL: { code: 'REL', name: 'Resting in lying position', color: '#8B5CF6', icon: 'fa-bed' },
-  URI: { code: 'URI', name: 'Urinating', color: '#FDE047', icon: 'fa-droplet' },
-  DEF: { code: 'DEF', name: 'Defecating', color: '#FB923C', icon: 'fa-circle-dot' },
-  ATT: { code: 'ATT', name: 'Attacking / Aggressive', color: '#EF4444', icon: 'fa-triangle-exclamation' },
-  OTH: { code: 'OTH', name: 'Others / Unclassified', color: '#94A3B8', icon: 'fa-question' },
-  UNKNOWN: { code: 'ACT', name: 'Active Normal', color: '#64748B', icon: 'fa-wave-square' }
-};
+import { useConfig } from '../context/ConfigContext';
 
 export default function HerdOverview({ cows, onSelectCow }) {
+  const { activities } = useConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [healthFilter, setHealthFilter] = useState('ALL');
 
@@ -90,7 +75,7 @@ export default function HerdOverview({ cows, onSelectCow }) {
       <div className="grid-herd">
         {filteredCows && filteredCows.length > 0 ? (
           filteredCows.map(cow => {
-            const act = ACTIVITY_CLASSES[cow.currentActivity] || ACTIVITY_CLASSES.OTH;
+            const act = activities[cow.currentActivity] || activities['OTH'] || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' };
             const isCritical = cow.health_risk_decision === 'HIGH_RISK' || cow.health_risk_decision === 'ESTRUS_ALERT';
 
             return (

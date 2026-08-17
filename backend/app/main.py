@@ -9,9 +9,10 @@ from app.database import engine, Base
 from app.ml.model_loader import get_ml_manager
 from app.api.endpoints import ingest_router, cows_router, hardware_router, auth_router
 from app.api.endpoints.admin_api import router as admin_api_router
+from app.api.endpoints.config import router as config_router
 
 from sqladmin import Admin
-from app.admin import AdminAuth, UserAdmin, TagRegistryAdmin, RawPacketAdmin, DataloggerHeaderAdmin
+from app.admin import AdminAuth, UserAdmin, TagRegistryAdmin, RawPacketAdmin, DataloggerHeaderAdmin, ActivityConfigAdmin
 from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +25,30 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables verified.")
+        from app.database import SessionLocal
+        from app.models.ui_parameter import ActivityConfig
+        db = SessionLocal()
+        try:
+            if db.query(ActivityConfig).count() == 0:
+                default_activities = [
+                    ActivityConfig(code="RES", name="Standing Rest", color="#64748b", icon="fa-pause", category="Normal"),
+                    ActivityConfig(code="RUS", name="Ruminating", color="#06b6d4", icon="fa-arrows-spin", category="Normal"),
+                    ActivityConfig(code="MOV", name="Walking", color="#f59e0b", icon="fa-person-walking", category="Active"),
+                    ActivityConfig(code="FEP", name="Feeding", color="#10b981", icon="fa-bowl-food", category="Normal"),
+                    ActivityConfig(code="FED", name="Feeding", color="#10b981", icon="fa-bowl-food", category="Normal"),
+                    ActivityConfig(code="DRN", name="Drinking", color="#3b82f6", icon="fa-glass-water", category="Normal"),
+                    ActivityConfig(code="LCK", name="Licking", color="#ec4899", icon="fa-hand-sparkles", category="Normal"),
+                    ActivityConfig(code="REL", name="Lying Rest", color="#8b5cf6", icon="fa-bed", category="Normal"),
+                    ActivityConfig(code="URI", name="Urinating", color="#eab308", icon="fa-droplet", category="Normal"),
+                    ActivityConfig(code="DEF", name="Defecating", color="#a16207", icon="fa-circle-dot", category="Normal"),
+                    ActivityConfig(code="ATT", name="Aggressive", color="#ef4444", icon="fa-triangle-exclamation", category="Active"),
+                    ActivityConfig(code="GRZ", name="Grazing", color="#10b981", icon="fa-wheat-awn", category="Normal")
+                ]
+                db.add_all(default_activities)
+                db.commit()
+                logger.info("Seeded default ActivityConfig values.")
+        finally:
+            db.close()
     except Exception as e:
         logger.warning(f"Database table initialization warning: {e}")
         
@@ -59,6 +84,7 @@ admin.add_view(UserAdmin)
 admin.add_view(TagRegistryAdmin)
 admin.add_view(RawPacketAdmin)
 admin.add_view(DataloggerHeaderAdmin)
+admin.add_view(ActivityConfigAdmin)
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -87,6 +113,7 @@ app.include_router(cows_router, prefix=f"{settings.API_V1_STR}/cows", tags=["Cat
 app.include_router(hardware_router, prefix=f"{settings.API_V1_STR}", tags=["Hardware Specs"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_api_router, prefix="/api/admin", tags=["Admin Management"])
+app.include_router(config_router, prefix="/api/config", tags=["Configuration"])
 
 # Legacy / Frontend Compatibility Endpoints
 from fastapi import Depends
@@ -113,6 +140,7 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
 def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
     from app.models.tag_registry import TagRegistry
     from app.models.datalogger import DataloggerHeader
+    from app.models.ui_parameter import ActivityConfig
     from sqlalchemy import text
     from datetime import datetime, timedelta, timezone
     
@@ -138,20 +166,8 @@ def api_get_cow_activity_log(cow_id: str, db: Session = Depends(get_db)):
     chunk_size = len(headers) // num_chunks if num_chunks > 0 else 1
     
     manager = get_ml_manager()
-    ACTIVITY_MAP = {
-        "RES": {"name": "Standing Rest", "color": "#64748b", "category": "Normal"},
-        "RUS": {"name": "Ruminating", "color": "#06b6d4", "category": "Normal"},
-        "MOV": {"name": "Walking", "color": "#f59e0b", "category": "Active"},
-        "FEP": {"name": "Feeding", "color": "#10b981", "category": "Normal"},
-        "FED": {"name": "Feeding", "color": "#10b981", "category": "Normal"},
-        "DRN": {"name": "Drinking", "color": "#3b82f6", "category": "Normal"},
-        "LCK": {"name": "Licking", "color": "#ec4899", "category": "Normal"},
-        "REL": {"name": "Lying Rest", "color": "#8b5cf6", "category": "Normal"},
-        "URI": {"name": "Urinating", "color": "#eab308", "category": "Normal"},
-        "DEF": {"name": "Defecating", "color": "#a16207", "category": "Normal"},
-        "ATT": {"name": "Aggressive", "color": "#ef4444", "category": "Active"},
-        "GRZ": {"name": "Grazing", "color": "#10b981", "category": "Normal"}
-    }
+    configs = db.query(ActivityConfig).all()
+    ACTIVITY_MAP = {cfg.code: {"name": cfg.name, "color": cfg.color, "category": cfg.category} for cfg in configs}
     
     logs = []
     

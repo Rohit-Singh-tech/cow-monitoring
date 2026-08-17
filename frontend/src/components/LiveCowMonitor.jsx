@@ -25,25 +25,12 @@ ChartJS.register(
   Filler
 );
 
-const ACTIVITY_CLASSES = {
-  RES: { code: 'RES', name: 'Resting in standing position', color: '#64748B', icon: 'fa-pause' },
-  RUS: { code: 'RUS', name: 'Ruminating in standing position', color: '#06B6D4', icon: 'fa-arrows-spin' },
-  MOV: { code: 'MOV', name: 'Moving / Active', color: '#F59E0B', icon: 'fa-person-walking' },
-  FEP: { code: 'FEP', name: 'Feeding in Pot', color: '#10B981', icon: 'fa-bowl-food' },
-  FED: { code: 'FED', name: 'Feeding', color: '#10B981', icon: 'fa-bowl-food' },
-  GRZ: { code: 'GRZ', name: 'Grazing Field', color: '#10B981', icon: 'fa-wheat-awn' },
-  DRN: { code: 'DRN', name: 'Drinking Water', color: '#0EA5E9', icon: 'fa-glass-water' },
-  LCK: { code: 'LCK', name: 'Licking', color: '#EC4899', icon: 'fa-hand-sparkles' },
-  REL: { code: 'REL', name: 'Resting in lying position', color: '#8B5CF6', icon: 'fa-bed' },
-  URI: { code: 'URI', name: 'Urinating', color: '#FDE047', icon: 'fa-droplet' },
-  DEF: { code: 'DEF', name: 'Defecating', color: '#FB923C', icon: 'fa-circle-dot' },
-  ATT: { code: 'ATT', name: 'Attacking / Aggressive', color: '#EF4444', icon: 'fa-triangle-exclamation' },
-  OTH: { code: 'OTH', name: 'Others / Unclassified', color: '#94A3B8', icon: 'fa-question' },
-  UNKNOWN: { code: 'ACT', name: 'Active Normal', color: '#64748B', icon: 'fa-wave-square' }
-};
+import { useConfig } from '../context/ConfigContext';
 
 export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
-  if (!currentData) {
+  const { activities, loading } = useConfig();
+
+  if (!currentData || loading) {
     return (
       <div className="glass-panel" style={{ padding: '3rem', textAlign: 'center' }}>
         <i className="fa-solid fa-satellite-dish fa-spin" style={{ fontSize: '2.5rem', color: 'var(--accent-emerald)', marginBottom: '1rem' }}></i>
@@ -75,7 +62,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
     currentActKey = currentData.currentActivity;
   }
 
-  const act = ACTIVITY_CLASSES[currentActKey] || actData || ACTIVITY_CLASSES.RUS;
+  const act = activities[currentActKey] || actData || activities['RUS'] || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' };
 
   const isHighRisk = healthDecision === 'HIGH_RISK' || 
                      healthDecision === 'ESTRUS_ALERT' || 
@@ -190,7 +177,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         moveHours,
         otherHours
       ],
-      backgroundColor: ['#06B6D4', '#8B5CF6', '#10B981', '#F59E0B', '#64748B'],
+      backgroundColor: [activities?.RUS?.color || '#06B6D4', activities?.REL?.color || '#8B5CF6', activities?.FEP?.color || '#10B981', activities?.MOV?.color || '#F59E0B', activities?.RES?.color || '#64748B'],
       borderColor: theme === 'light' ? '#FFFFFF' : 'rgba(8, 18, 13, 0.95)',
       borderWidth: 2,
       hoverOffset: 6
@@ -462,7 +449,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.65rem' }}>
           {['RES', 'RUS', 'MOV', 'FEP', 'DRN', 'LCK', 'REL', 'URI', 'DEF', 'ATT', 'OTH'].map((key) => {
-            const item = ACTIVITY_CLASSES[key] || ACTIVITY_CLASSES.UNKNOWN;
+            const item = activities[key] || activities['OTH'] || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' };
             const isCurrent = key === currentActKey;
             return (
               <div 

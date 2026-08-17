@@ -1,6 +1,7 @@
 from app.models.user import User
 from app.models.tag_registry import TagRegistry
 from app.models.datalogger import RawPacket, SensorPacket, DataloggerHeader, DataloggerPoint
+from app.models.ui_parameter import ActivityConfig
 
 __all__ = [
     "User",
@@ -8,5 +9,6 @@ __all__ = [
     "RawPacket",
     "SensorPacket",
     "DataloggerHeader",
-    "DataloggerPoint"
+    "DataloggerPoint",
+    "ActivityConfig"
 ]
