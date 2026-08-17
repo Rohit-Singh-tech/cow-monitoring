@@ -46,7 +46,9 @@ def get_points_for_device(db: Session, device_id: str):
     header_sql = text("""
         SELECT id, timestamp, total_packets, packet_id_num
         FROM datalogger_headers
-        WHERE id = (SELECT MAX(id) FROM datalogger_headers WHERE device_id = :dev)
+        WHERE device_id = :dev
+        ORDER BY id DESC
+        LIMIT 1
     """)
     header = db.execute(header_sql, {"dev": str(device_id)}).fetchone()
 
