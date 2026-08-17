@@ -72,12 +72,14 @@ def process_pending_inferences(db, manager, batch_size=50, prioritize_recent=Tru
             is_heat = pred["heat_detection"]["in_heat"]
             heat_prob = pred["heat_detection"]["heat_probability"]
             health_risk = pred.get("health_risk_decision", "HEALTHY")
+            anomaly_score = pred.get("anomaly_detection", {}).get("score", 0.0)
         else:
             act_code = "RES"
             conf = 80
             is_heat = False
             heat_prob = 0.0
             health_risk = "HEALTHY"
+            anomaly_score = 0.0
             
         inference = MLInference(
             header_id=hid,
@@ -85,7 +87,8 @@ def process_pending_inferences(db, manager, batch_size=50, prioritize_recent=Tru
             confidence=conf,
             is_heat=is_heat,
             heat_probability=heat_prob,
-            health_risk_decision=health_risk
+            health_risk_decision=health_risk,
+            anomaly_score=anomaly_score
         )
         new_inferences.append(inference)
         

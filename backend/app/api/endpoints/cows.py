@@ -54,7 +54,7 @@ def _get_latest_inference_for_device(db: Session, device_id: str):
     if not inference:
         result = db.execute(text("""
             SELECT h.id, h.timestamp, m.activity_code, m.confidence, m.is_heat, 
-                   m.heat_probability, m.health_risk_decision
+                   m.heat_probability, m.health_risk_decision, m.anomaly_score
             FROM datalogger_headers h
             JOIN ml_inferences m ON h.id = m.header_id
             WHERE h.device_id = :dev
@@ -72,6 +72,7 @@ def _get_latest_inference_for_device(db: Session, device_id: str):
                     self.is_heat = row[4]
                     self.heat_probability = row[5]
                     self.health_risk_decision = row[6]
+                    self.anomaly_score = row[7] if len(row) > 7 else 0.0
             inference = InfResult(result)
     
     return header, inference
