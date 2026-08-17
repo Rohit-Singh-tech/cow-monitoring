@@ -79,7 +79,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
         health.lyingHoursToday || 0,
         health.feedingHoursToday || 0,
         health.movingHoursToday || 0,
-        +Math.max(0, 24 - ((health.ruminationHoursToday || 0) + (health.lyingHoursToday || 0) + (health.feedingHoursToday || 0) + (health.movingHoursToday || 0))).toFixed(1)
+        +Math.max(0, (health.monitoredHoursToday || 0) - ((health.ruminationHoursToday || 0) + (health.lyingHoursToday || 0) + (health.feedingHoursToday || 0) + (health.movingHoursToday || 0))).toFixed(1)
       ],
       backgroundColor: ['#00f3ff', '#a78bfa', '#39ff14', '#ffaa00', '#64748b'],
       borderWidth: 2,
@@ -276,7 +276,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
           <div className="card-header-box">
             <div className="card-title">
               <i className="fa-solid fa-chart-pie"></i>
-              24H BEHAVIOR MATRIX (PROJECTED)
+              ACTUAL BEHAVIOR MATRIX (TODAY)
             </div>
           </div>
           <div className="card-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '260px' }}>
@@ -291,17 +291,24 @@ export default function LiveCowMonitor({ currentData, accelBuffer }) {
       </div>
 
       {/* Activity Legend Grid */}
-      <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ fontSize: '0.9rem', fontFamily: 'var(--title-font)', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary-cyan)', marginBottom: '1rem', letterSpacing: '0.1em' }}>
-          NEURAL NETWORK CLASSIFICATION LABELS (11 CLASSES):
+      <div className="glass-panel" style={{ padding: '1.25rem', marginTop: '2rem' }}>
+        <div style={{ fontSize: '0.8rem', fontFamily: 'var(--title-font)', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary-cyan)', marginBottom: '1rem', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <i className="fa-solid fa-tags"></i>
+          NEURAL NETWORK CLASSIFICATION LABELS (11 CLASSES)
         </div>
-        <div className="activity-legend-grid">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
           {Object.keys(ACTIVITY_CLASSES).map((key) => {
             const item = ACTIVITY_CLASSES[key];
             return (
-              <div key={key} className="legend-item">
-                <div className="legend-color-dot" style={{ background: item.color }}></div>
-                <strong>{item.code}:</strong> {item.name}
+              <div key={key} style={{
+                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                background: `${item.color}15`, border: `1px solid ${item.color}40`,
+                padding: '0.4rem 0.75rem', borderRadius: 'var(--radius-pill)',
+                fontSize: '0.75rem', transition: 'all 0.2s ease', cursor: 'default'
+              }}>
+                <i className={`fa-solid ${item.icon}`} style={{ color: item.color }}></i>
+                <strong style={{ color: 'var(--text-main)', fontFamily: 'JetBrains Mono' }}>{item.code}</strong>
+                <span style={{ color: 'var(--text-muted)' }}>{item.name}</span>
               </div>
             );
           })}

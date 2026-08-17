@@ -59,20 +59,25 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
         </div>
 
         {/* Theme Toggle Button */}
+        {/* Theme Toggle Button */}
         <button 
           onClick={onToggleTheme} 
           style={{ 
-            background: 'transparent', 
-            border: 'none', 
-            color: 'var(--text-main)', 
+            background: theme === 'light' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255,255,255,0.05)', 
+            border: `1px solid ${theme === 'light' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.1)'}`, 
+            color: theme === 'light' ? 'var(--primary-cyan)' : 'var(--text-main)', 
             cursor: 'pointer', 
-            fontSize: '1.25rem',
+            fontSize: '0.9rem',
             outline: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: '40px',
-            height: '40px'
+            width: '34px',
+            height: '34px',
+            borderRadius: '50%',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            transition: 'all 0.3s ease',
+            flexShrink: 0
           }}
           title="Toggle Theme"
         >

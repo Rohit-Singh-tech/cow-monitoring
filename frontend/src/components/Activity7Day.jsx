@@ -97,13 +97,42 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
     plugins: { legend: { position: 'top', labels: { color: '#cbd5e1' } } }
   };
 
-  const avg = data7Day.weeklyAverageHours || {
-    REL: 11.2,
-    RUS: 8.0,
-    FEP: 4.1,
-    MOV: 1.5,
-    DRN: 0.8
-  };
+  const avg = data7Day.weeklyAverageHours || (() => {
+    if (!history || history.length === 0) return { REL: 0, RUS: 0, FEP: 0, MOV: 0, DRN: 0 };
+    const sums = history.reduce((acc, curr) => ({
+      REL: acc.REL + (curr.REL || 0),
+      RUS: acc.RUS + (curr.RUS || 0),
+      FEP: acc.FEP + (curr.FEP || 0),
+      MOV: acc.MOV + (curr.MOV || 0),
+      DRN: acc.DRN + (curr.DRN || 0)
+    }), { REL: 0, RUS: 0, FEP: 0, MOV: 0, DRN: 0 });
+    return {
+      REL: (sums.REL / history.length).toFixed(1),
+      RUS: (sums.RUS / history.length).toFixed(1),
+      FEP: (sums.FEP / history.length).toFixed(1),
+      MOV: (sums.MOV / history.length).toFixed(1),
+      DRN: (sums.DRN / history.length).toFixed(1)
+    };
+  })();
+
+  // Group consecutive logs with the same activityCode
+  const groupedLogs = [];
+  if (logs && logs.length > 0) {
+    let currentGroup = { ...logs[0] };
+    for (let i = 1; i < logs.length; i++) {
+      const log = logs[i];
+      if (log.activityCode === currentGroup.activityCode) {
+        currentGroup.startTime = log.startTime; // older start time
+        currentGroup.durationMinutes += log.durationMinutes;
+        currentGroup.startPacketId = log.startPacketId; // older packet
+        currentGroup.confidencePercent = Math.round((currentGroup.confidencePercent + log.confidencePercent) / 2);
+      } else {
+        groupedLogs.push(currentGroup);
+        currentGroup = { ...log };
+      }
+    }
+    groupedLogs.push(currentGroup);
+  }
 
   return (
     <div>
@@ -205,26 +234,26 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                 </tr>
               </thead>
               <tbody>
-                {logs && logs.length > 0 ? (
-                  logs.map(log => (
+                {groupedLogs && groupedLogs.length > 0 ? (
+                  groupedLogs.map(log => (
                     <tr key={log.logId}>
-                      <td style={{ fontFamily: 'JetBrains Mono' }}>#{log.logId}</td>
-                      <td style={{ color: 'var(--text-muted)', fontWeight: 600 }}>#{cowId}</td>
-                      <td>{new Date(log.startTime).toLocaleTimeString()}</td>
-                      <td>{new Date(log.endTime).toLocaleTimeString()}</td>
-                      <td><strong>{log.durationMinutes} mins</strong></td>
+                      <td style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-main)' }}>#{log.logId}</td>
+                      <td style={{ color: 'var(--text-main)', fontWeight: 600 }}>{data7Day?.device_id ? `Node-${data7Day.device_id}` : `Node-${cowId}`}</td>
+                      <td style={{ color: 'var(--text-main)' }}>{new Date(log.startTime).toLocaleTimeString()}</td>
+                      <td style={{ color: 'var(--text-main)' }}>{new Date(log.endTime).toLocaleTimeString()}</td>
+                      <td style={{ color: 'var(--text-main)' }}><strong>{log.durationMinutes} mins</strong></td>
                       <td>
-                        <span class="code-badge" style={{ background: `${log.color}33`, color: log.color, border: `1px solid ${log.color}` }}>
+                        <span className="code-badge" style={{ background: `${log.color}33`, color: log.color, border: `1px solid ${log.color}` }}>
                           {log.activityCode} - {log.activityName}
                         </span>
                       </td>
-                      <td>{log.category}</td>
+                      <td style={{ color: 'var(--text-main)' }}>{log.category}</td>
                       <td><strong style={{ color: 'var(--primary-emerald)' }}>{log.confidencePercent}%</strong></td>
-                      <td style={{ fontFamily: 'JetBrains Mono', fontSize: '0.775rem' }}>{log.startPacketId} - {log.endPacketId}</td>
+                      <td style={{ fontFamily: 'JetBrains Mono', fontSize: '0.775rem', color: 'var(--text-main)' }}>{log.startPacketId} - {log.endPacketId}</td>
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan="9" style={{ textAlgin: 'center', padding: '1rem' }}>No activity logs recorded yet.</td></tr>
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-main)' }}>No activity logs recorded yet.</td></tr>
                 )}
               </tbody>
             </table>

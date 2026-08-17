@@ -1,0 +1,138 @@
+/* Mobile Responsive Styles */
+@media (max-width: 1024px) {
+  .grid-top-stats {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column !important;
+  }
+  
+  .tab-bar {
+    width: 100% !important;
+    height: 75px !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--primary-cyan) !important;
+    border-top: 1px solid var(--primary-cyan) !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    padding: 0.5rem !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    background: var(--bg-dark) !important;
+    z-index: 1000 !important;
+    box-shadow: 0 -4px 10px rgba(0,0,0,0.5) !important;
+  }
+
+  .tab-bar:not(.open) {
+    display: flex !important; /* Override sidebar hidden state so bottom nav always shows */
+  }
+
+  .tab-btn {
+    flex-direction: column !important;
+    font-size: 0.65rem !important;
+    padding: 0.5rem !important;
+    text-align: center !important;
+    border-left: none !important;
+    border-top: 3px solid transparent !important;
+    gap: 0.25rem !important;
+    justify-content: center !important;
+    min-width: 80px !important;
+  }
+
+  .tab-btn.active {
+    border-left-width: 0 !important;
+    border-top: 3px solid var(--primary-cyan) !important;
+    background: linear-gradient(180deg, rgba(59, 130, 246, 0.2), transparent) !important;
+  }
+
+  .main-content {
+    padding: 1rem !important;
+    margin-bottom: 75px !important; /* Space for bottom nav */
+  }
+
+  .grid-top-stats {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 1rem !important;
+  }
+
+  .grid-telemetry {
+    grid-template-columns: 1fr !important;
+  }
+
+  .grid-2col {
+    grid-template-columns: 1fr !important;
+  }
+
+  .navbar {
+    padding: 1rem !important;
+    flex-direction: column !important;
+    gap: 1rem !important;
+  }
+  
+  .header-controls {
+    width: 100% !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+  }
+
+  .hero-status-card {
+    flex-direction: column !important;
+    text-align: center !important;
+  }
+  
+  .cow-profile-header {
+    flex-direction: column !important;
+    gap: 1rem !important;
+  }
+  
+  .cow-meta-badges {
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+  }
+  
+  .current-activity-box {
+    margin-top: 1rem !important;
+    align-items: center !important;
+  }
+  
+  .accel-chart-container, .card-body > div > canvas {
+    height: 250px !important;
+  }
+  
+  .alert-banner {
+    flex-direction: column !important;
+    text-align: center !important;
+  }
+  
+  .telemetry-meta-row {
+    flex-direction: column !important;
+    gap: 1rem !important;
+    align-items: center !important;
+  }
+  
+  .metric-card {
+    padding: 1rem !important;
+  }
+  
+  .metric-value {
+    font-size: 1.2rem !important;
+  }
+  
+  .table-responsive {
+    overflow-x: auto !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .grid-top-stats {
+    grid-template-columns: 1fr !important;
+  }
+  
+  .brand-title {
+    font-size: 1.1rem !important;
+  }
+}

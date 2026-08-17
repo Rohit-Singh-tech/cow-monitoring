@@ -152,9 +152,9 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
         projection_multiplier = 0.0
         total_valid = 1  # prevent division by zero
     else:
-        projection_multiplier = 24.0
+        projection_multiplier = monitored_hours_today
         
-    # Project current distribution over a full 24-hour period for daily targets (only if data exists)
+    # Calculate current distribution over actual monitored period
     result = {
         "today_pkts": today_pkts,
         "monitored_hours_today": monitored_hours_today,
