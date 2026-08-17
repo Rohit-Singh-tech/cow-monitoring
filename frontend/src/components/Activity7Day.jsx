@@ -53,8 +53,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
       DRN: data7Day.drinkingHours?.[idx] || 0,
       LCK: data7Day.lickingHours?.[idx] || 0,
       OTH: data7Day.otherHours?.[idx] || 0,
-      healthScore: 90 + Math.random() * 8, // Realistic health index
-      estrusIndex: 10 + Math.random() * 5  // Realistic estrus probability index
+      healthScore: data7Day.healthScores?.[idx] || 0,
+      estrusIndex: data7Day.estrusIndices?.[idx] || 0
     }));
   }
 

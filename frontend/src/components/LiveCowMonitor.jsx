@@ -46,9 +46,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
   const ml = currentData.ml_inference || currentData.ml_predictions || {};
 
   const healthDecision = health.health_risk_decision || 
-                         (typeof currentData.healthStatus === 'string' ? currentData.healthStatus : 'HEALTHY');
+                         (typeof currentData.healthStatus === 'string' ? currentData.healthStatus : 'NO_DATA');
   
-  const riskClass = String(healthDecision || 'healthy').toLowerCase().replace('_', '-');
+  const riskClass = String(healthDecision || 'no-data').toLowerCase().replace('_', '-');
 
   // Detect current activity key
   let currentActKey = 'RUS';
@@ -228,9 +228,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             <h2>{currentData.cowName || `Device #${currentData.device_id}`} <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem', fontWeight: 700 }}>({currentData.tagNumber || `TAG-${currentData.device_id}`})</span></h2>
             <div className="cow-meta-badges">
               <span className="meta-chip"><i className="fa-solid fa-microchip" style={{ marginRight: '0.35rem', color: 'var(--accent-sky)' }}></i>Node: {currentData.device_id}</span>
-              <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed || 'Gir / Sahiwal Dairy'}</span>
+              {currentData.breed && <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>}
               <span className={`health-badge ${healthDecision}`}>
-                {String(healthDecision).replace('_', ' ')}
+                {currentData.isStale ? 'NO DATA' : String(healthDecision).replace('_', ' ')}
               </span>
             </div>
           </div>
@@ -238,11 +238,11 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         <div className="current-activity-box">
           <div className="activity-label-sm">CURRENT BEHAVIOUR STATE</div>
           <div className="activity-badge-hero">
-            <i className={`fa-solid ${act.icon || 'fa-arrows-spin'}`} style={{ color: act.color }}></i> {act.name || 'Ruminating in standing position'}
+            <i className={`fa-solid ${act.icon || 'fa-question'}`} style={{ color: act.color }}></i> {currentData.isStale ? 'No Recent Data' : (act.name || 'Unknown')}
           </div>
           <div className="activity-duration-tag">
             <i className="fa-solid fa-brain" style={{ color: 'var(--accent-emerald)', marginRight: '0.25rem' }}></i>
-            CONFIDENCE: <strong style={{ color: 'var(--text-primary)' }}>{Number(confidence).toFixed(1)}%</strong>
+            CONFIDENCE: <strong style={{ color: 'var(--text-primary)' }}>{currentData.isStale ? '0' : Number(confidence).toFixed(1)}%</strong>
           </div>
         </div>
       </div>
@@ -254,8 +254,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
           <div className="alert-content">
             <h4>CRITICAL HEALTH ATTENTION REQUIRED</h4>
             <p>
-              {health.healthRecommendation || 
-               'CRITICAL: Cow is showing signs of being in heat and unusual movement patterns and behavior that is very different from the rest of the herd. Action needed: Prepare for artificial insemination (breeding) in the next 12 hours and physically check the cow for injury or sickness.'}
+              {health.healthRecommendation || 'Health risk detected by ML model. Action needed: Physically examine the animal immediately.'}
             </p> 
           </div>
         </div>
@@ -266,7 +265,17 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
           <div className="alert-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
           <div className="alert-content">
             <h4>HEALTH MONITORING ADVISORY</h4>
-            <p>{health.healthRecommendation || 'MONITOR: Cow is showing unusual activity. Keep a close eye on her.'}</p>
+            <p>{health.healthRecommendation || 'Some health metrics require attention. Continue monitoring.'}</p>
+          </div>
+        </div>
+      )}
+      
+      {currentData.isStale && (
+        <div className="alert-banner" style={{ background: 'rgba(100, 116, 139, 0.15)', border: '1px solid rgba(100, 116, 139, 0.3)', color: 'var(--text-primary)' }}>
+          <div className="alert-icon" style={{ color: '#64748b' }}><i className="fa-solid fa-clock"></i></div>
+          <div className="alert-content">
+            <h4>NODE OFFLINE / NO RECENT DATA</h4>
+            <p>{health.healthRecommendation || 'No sensor data received in the last 24 hours. Check collar node battery and BLE connectivity.'}</p>
           </div>
         </div>
       )}

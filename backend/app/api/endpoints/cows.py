@@ -452,6 +452,8 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     feed_list = []
     act_list = []
     monitored_list = []
+    health_score_list = []
+    estrus_index_list = []
 
     if summaries:
         for s in reversed(summaries):
@@ -462,6 +464,21 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             feed_list.append(round(s.feeding_hours, 1))
             act_list.append(round(s.moving_hours, 1))
             monitored_list.append(round(s.monitored_hours, 1))
+            
+            # Data-driven Health Score based on rumination targets (8 hours is ideal)
+            health_score = min(100, int((s.rumination_hours / 8.0) * 100)) if s.rumination_hours > 0 else 0
+            if s.monitored_hours > 0 and s.rumination_hours == 0 and s.lying_hours == 0:
+                health_score = 0
+            elif s.monitored_hours == 0:
+                health_score = 0
+            # Ensure a minimum score if they have any normal activity
+            elif health_score == 0 and (s.lying_hours > 0 or s.feeding_hours > 0):
+                health_score = 50
+            health_score_list.append(health_score)
+            
+            # Data-driven Estrus Index based on percentage of packets flagged as heat
+            e_index = int((s.heat_count / s.total_packets) * 100) if s.total_packets > 0 else 0
+            estrus_index_list.append(min(100, e_index))
     else:
         # Fallback: compute from packet counts if no summaries exist yet
         sql = text("""
@@ -493,6 +510,8 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             feed_list.append(0.0)
             act_list.append(0.0)
             monitored_list.append(day_hours)
+            health_score_list.append(0)
+            estrus_index_list.append(0)
 
     return {
         "cowId": cow_id,
@@ -504,5 +523,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         "feedingHours": feed_list,
         "activeHours": act_list,
         "monitoredHours": monitored_list,
+        "healthScores": health_score_list,
+        "estrusIndices": estrus_index_list,
         "estrusAlerts": []
     }
