@@ -30,126 +30,173 @@ ACTIVITY_MAP = {
     "GRZ": {"code": "FEP", "name": "Grazing Field", "color": "#10b981", "icon": "fa-bowl-food"}
 }
 
+# 24-hour staleness threshold
+STALENESS_HOURS = 24
+
+
+def _get_latest_inference_for_device(db: Session, device_id: str):
+    """
+    Get the latest ML inference for a device by joining latest header to ml_inferences.
+    Returns (header, inference) tuple. Both may be None.
+    """
+    header = db.query(DataloggerHeader).filter(
+        DataloggerHeader.device_id == str(device_id)
+    ).order_by(DataloggerHeader.id.desc()).first()
+    
+    if not header:
+        return None, None
+    
+    inference = db.query(MLInference).filter(
+        MLInference.header_id == header.id
+    ).first()
+    
+    # If the latest header has no inference, try the most recent header that DOES have one
+    if not inference:
+        result = db.execute(text("""
+            SELECT h.id, h.timestamp, m.activity_code, m.confidence, m.is_heat, 
+                   m.heat_probability, m.health_risk_decision
+            FROM datalogger_headers h
+            JOIN ml_inferences m ON h.id = m.header_id
+            WHERE h.device_id = :dev
+            ORDER BY h.id DESC
+            LIMIT 1
+        """), {"dev": str(device_id)}).fetchone()
+        
+        if result:
+            # Create a mock inference object for consistency
+            class InfResult:
+                def __init__(self, row):
+                    self.header_id = row[0]
+                    self.activity_code = row[2]
+                    self.confidence = row[3]
+                    self.is_heat = row[4]
+                    self.heat_probability = row[5]
+                    self.health_risk_decision = row[6]
+            inference = InfResult(result)
+    
+    return header, inference
+
+
+def _is_device_stale(latest_timestamp) -> bool:
+    """Check if device hasn't sent data in the last 24 hours."""
+    if latest_timestamp is None:
+        return True
+    now = datetime.now(timezone.utc)
+    if latest_timestamp.tzinfo is None:
+        latest_timestamp = latest_timestamp.replace(tzinfo=timezone.utc)
+    return (now - latest_timestamp).total_seconds() > (STALENESS_HOURS * 3600)
+
+
+def _build_health_status_from_inference(inference, summary=None):
+    """
+    Build consistent health status from ML inference.
+    Used by BOTH herd overview and live dashboard for consistency.
+    """
+    if inference is None:
+        return {
+            "act_code": None,
+            "health_risk": None,
+            "is_heat": False,
+            "heat_prob_pct": 0,
+        }
+    
+    act_code = inference.activity_code
+    health_risk = inference.health_risk_decision or "HEALTHY"
+    is_heat = inference.is_heat or False
+    heat_prob_pct = int((inference.heat_probability or 0) * 100)
+    
+    # Heat detected in today's summary also flags risk
+    heat_from_summary = (summary.heat_count > 0) if summary else False
+    
+    # Consistent health decision: if ML says HIGH_RISK or heat detected anywhere
+    if health_risk == "HIGH_RISK" or is_heat or heat_from_summary:
+        final_health = "HIGH_RISK"
+    elif health_risk == "MONITOR":
+        final_health = "MONITOR"
+    else:
+        final_health = "HEALTHY"
+    
+    return {
+        "act_code": act_code,
+        "health_risk": final_health,
+        "is_heat": is_heat or heat_from_summary,
+        "heat_prob_pct": heat_prob_pct,
+    }
+
 
 @router.get("", response_model=List[dict])
 def get_herd_overview(db: Session = Depends(get_db)):
     """
-    Fast herd overview using pre-computed ML inferences.
-    Single query approach — zero ML inference at request time.
+    Herd overview: fully data-driven from database.
+    No hardcoded values. Shows 0 if no data in 24 hours.
+    Uses same health logic as individual cow view for consistency.
     """
     cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
     if not cows:
         return []
 
-    # Get today's date for daily summaries
     today = date.today()
 
-    # Batch-fetch today's daily summaries for all cows in ONE query
+    # Batch-fetch today's daily summaries
     all_summaries = db.query(DailyCowSummary).filter(
         DailyCowSummary.date == today
     ).all()
     summaries_by_device = {s.device_id: s for s in all_summaries}
 
-    # Batch-fetch the latest ML inference per device in ONE query
-    # Uses a subquery to find the latest header per device, then joins to ml_inferences
-    device_ids = [str(c.device_id) for c in cows]
-    
-    latest_inferences = {}
-    latest_timestamps = {}
-    
-    if device_ids:
-        # Get the latest header + its ML inference for each device
-        sql = text("""
-            SELECT DISTINCT ON (h.device_id) 
-                h.device_id, h.timestamp, 
-                m.activity_code, m.confidence, m.is_heat, m.heat_probability, m.health_risk_decision
-            FROM datalogger_headers h
-            LEFT JOIN ml_inferences m ON h.id = m.header_id
-            WHERE h.device_id = ANY(:devs)
-            ORDER BY h.device_id, h.id DESC
-        """)
-        try:
-            rows = db.execute(sql, {"devs": device_ids}).fetchall()
-            for row in rows:
-                dev_id = row[0]
-                latest_timestamps[dev_id] = row[1]
-                if row[2] is not None:  # has ML inference
-                    latest_inferences[dev_id] = {
-                        "activity_code": row[2],
-                        "confidence": row[3],
-                        "is_heat": row[4],
-                        "heat_probability": row[5],
-                        "health_risk_decision": row[6]
-                    }
-        except Exception as e:
-            logger.warning(f"Batch inference query failed, using fallback: {e}")
-            # Fallback: query per device (slower but works on SQLite)
-            for dev_id in device_ids:
-                try:
-                    header = db.query(DataloggerHeader).filter(
-                        DataloggerHeader.device_id == dev_id
-                    ).order_by(DataloggerHeader.id.desc()).first()
-                    if header:
-                        latest_timestamps[dev_id] = header.timestamp
-                        inf = db.query(MLInference).filter(MLInference.header_id == header.id).first()
-                        if inf:
-                            latest_inferences[dev_id] = {
-                                "activity_code": inf.activity_code,
-                                "confidence": inf.confidence,
-                                "is_heat": inf.is_heat,
-                                "heat_probability": inf.heat_probability,
-                                "health_risk_decision": inf.health_risk_decision
-                            }
-                except Exception:
-                    pass
-
     result = []
     for c in cows:
         dev_id = str(c.device_id)
         
-        # Get pre-computed daily summary
-        summary = summaries_by_device.get(dev_id)
-        rum_hrs = summary.rumination_hours if summary else 0.0
-        lying_hrs = summary.lying_hours if summary else 0.0
-        feed_hrs = summary.feeding_hours if summary else 0.0
-        move_hrs = summary.moving_hours if summary else 0.0
+        # Get latest inference (same function used by live dashboard)
+        header, inference = _get_latest_inference_for_device(db, dev_id)
         
-        # Get pre-computed latest inference
-        inf = latest_inferences.get(dev_id)
-        if inf:
-            act_code = inf["activity_code"]
-            act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
-            health_risk = inf["health_risk_decision"] or "HEALTHY"
-            is_heat = inf["is_heat"] or False
-            heat_prob_pct = int((inf["heat_probability"] or 0) * 100)
-        else:
-            act_code = "RES"
-            act_info = ACTIVITY_MAP.get("RES")
-            health_risk = "HEALTHY"
-            is_heat = False
+        ts = header.timestamp if header else None
+        stale = _is_device_stale(ts)
+        summary = summaries_by_device.get(dev_id)
+        
+        # Build health status — SAME logic as individual cow view
+        health = _build_health_status_from_inference(inference, summary)
+        
+        # If device is stale (no data in 24h), show 0 for all health params
+        if stale:
+            rum_hrs = 0.0
+            lying_hrs = 0.0
+            feed_hrs = 0.0
+            move_hrs = 0.0
+            act_code = None
+            health_risk = None  # null = no recent data
             heat_prob_pct = 0
-            
-        ts = latest_timestamps.get(dev_id)
-        heat_from_summary = (summary.heat_count > 0) if summary else False
+        else:
+            rum_hrs = summary.rumination_hours if summary else 0.0
+            lying_hrs = summary.lying_hours if summary else 0.0
+            feed_hrs = summary.feeding_hours if summary else 0.0
+            move_hrs = summary.moving_hours if summary else 0.0
+            act_code = health["act_code"]
+            health_risk = health["health_risk"]
+            heat_prob_pct = health["heat_prob_pct"]
+        
+        act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
 
         result.append({
             "id": c.id,
             "device_id": dev_id,
             "tagNumber": f"TAG-{c.device_id}",
-            "name": c.name or f"Cattle #{c.device_id}",
-            "breed": c.breed or "Gir / Sahiwal",
-            "location": c.location or "Rupnagar Farm",
-            "weight": f"{c.weight} kg" if c.weight else "400 kg",
-            "healthStatus": "HIGH_RISK" if (health_risk == "HIGH_RISK" or is_heat or heat_from_summary) else health_risk,
-            "health_risk_decision": health_risk,
+            "name": c.name or f"Device #{c.device_id}",
+            "breed": c.breed or None,
+            "location": c.location or None,
+            "weight": f"{c.weight} kg" if c.weight else None,
+            "healthStatus": health_risk or "NO_DATA",
+            "health_risk_decision": health_risk or "NO_DATA",
             "currentActivity": act_code,
-            "activityName": act_info["name"],
+            "activityName": act_info["name"] if act_code else "No Recent Data",
             "ruminationHoursToday": rum_hrs,
             "lyingHoursToday": lying_hrs,
             "feedingHoursToday": feed_hrs,
             "movingHoursToday": move_hrs,
             "estrusProbability": heat_prob_pct,
-            "lastSeen": ts.isoformat() if ts else None
+            "lastSeen": ts.isoformat() if ts else None,
+            "isStale": stale,
+            "monitoredHoursToday": summary.monitored_hours if summary else 0.0
         })
         
     return result
@@ -158,8 +205,10 @@ def get_herd_overview(db: Session = Depends(get_db)):
 @router.get("/{cow_id}/live")
 def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     """
-    Get live health dashboard. Uses pre-computed ML inference from the database.
-    Only falls back to live ML if no pre-computed inference exists for the latest header.
+    Live dashboard: fully data-driven.
+    Uses SAME health logic as herd overview for consistency.
+    Falls back to live ML only if no cached inference exists.
+    Shows 0 if device has no data in 24 hours.
     """
     cow = None
     if str(cow_id).isdigit():
@@ -177,35 +226,21 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     dev_id = str(cow.device_id)
     today = date.today()
 
-    # Get today's pre-computed daily summary (1 row)
+    # Get today's pre-computed daily summary
     summary = db.query(DailyCowSummary).filter(
         DailyCowSummary.device_id == dev_id,
         DailyCowSummary.date == today
     ).first()
 
-    monitored_hours = summary.monitored_hours if summary else 0.0
-    rum_hrs = summary.rumination_hours if summary else 0.0
-    lying_hrs = summary.lying_hours if summary else 0.0
-    feed_hrs = summary.feeding_hours if summary else 0.0
-    move_hrs = summary.moving_hours if summary else 0.0
-    is_heat_summary = (summary.heat_count > 0) if summary else False
-
-    # Get latest header + its points + its ML inference
-    header = db.query(DataloggerHeader).filter(
-        DataloggerHeader.device_id == dev_id
-    ).order_by(DataloggerHeader.id.desc()).first()
-
+    # Get latest header + ML inference
+    header, inference = _get_latest_inference_for_device(db, dev_id)
+    
     ts = header.timestamp if header else None
+    stale = _is_device_stale(ts)
+    
+    # Get accelerometer points for the latest header
     x_buf, y_buf, z_buf = [], [], []
-    ml_res = None
-    act_code = "RES"
-    act_info = ACTIVITY_MAP.get("RES")
-    is_heat = False
-    heat_prob_pct = 0
-    health_risk = "HEALTHY"
-
     if header:
-        # Get points for the latest header
         points = db.query(DataloggerPoint).filter(
             DataloggerPoint.header_id == header.id
         ).order_by(DataloggerPoint.point_index.asc()).all()
@@ -214,75 +249,91 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         y_buf = [p.y for p in points if p.y is not None]
         z_buf = [p.z for p in points if p.z is not None]
 
-        # Try to get pre-computed ML inference
-        inference = db.query(MLInference).filter(MLInference.header_id == header.id).first()
+    # Build ML result
+    ml_res = None
+    
+    if inference:
+        act_code = inference.activity_code
+        act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
         
-        if inference:
-            act_code = inference.activity_code
-            act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
-            is_heat = inference.is_heat or False
-            heat_prob_pct = int((inference.heat_probability or 0) * 100)
-            health_risk = inference.health_risk_decision or "HEALTHY"
-            
-            # Build full ML result from stored inference
-            heat_alert = "HIGH" if (inference.heat_probability or 0) > 0.7 else ("MODERATE" if (inference.heat_probability or 0) > 0.4 else "NORMAL")
-            ml_res = {
-                "ml_engine_status": "CACHED",
-                "activity": {
-                    "code": act_code,
-                    "description": act_info["name"],
-                    "confidence": (inference.confidence or 85) / 100.0,
-                    "is_ruminating": act_code == "RUS",
-                    "is_grazing": act_code in ["GRZ", "FED", "FEP", "FES"],
-                    "is_resting": act_code in ["RES", "REL"]
-                },
-                "heat_detection": {
-                    "in_heat": is_heat,
-                    "heat_probability": inference.heat_probability or 0.0,
-                    "alert_level": heat_alert
-                },
-                "anomaly_detection": {"is_anomaly": False, "score": 0.0},
-                "deviation_metrics": {"score": 0.0, "is_deviating": False, "threshold": 1.5},
-                "health_risk_decision": health_risk,
-                "features_extracted_count": 67
-            }
-        elif len(x_buf) > 0:
-            # Fallback: run ML live only if no cached inference exists
-            logger.info(f"No cached inference for header {header.id}, running live ML")
-            manager = get_ml_manager()
-            ml_res = manager.predict(x_buf, y_buf, z_buf)
-            act_code = ml_res["activity"]["code"]
-            act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
-            is_heat = ml_res["heat_detection"]["in_heat"]
-            heat_prob_pct = int(ml_res["heat_detection"]["heat_probability"] * 100)
-            health_risk = ml_res.get("health_risk_decision", "HEALTHY")
+        heat_alert = "HIGH" if (inference.heat_probability or 0) > 0.7 else (
+            "MODERATE" if (inference.heat_probability or 0) > 0.4 else "NORMAL")
+        
+        ml_res = {
+            "ml_engine_status": "ACTIVE",
+            "activity": {
+                "code": act_code,
+                "description": act_info["name"],
+                "confidence": (inference.confidence or 85) / 100.0,
+                "is_ruminating": act_code == "RUS",
+                "is_grazing": act_code in ["GRZ", "FED", "FEP", "FES"],
+                "is_resting": act_code in ["RES", "REL"]
+            },
+            "heat_detection": {
+                "in_heat": inference.is_heat or False,
+                "heat_probability": inference.heat_probability or 0.0,
+                "alert_level": heat_alert
+            },
+            "anomaly_detection": {"is_anomaly": False, "score": 0.0},
+            "deviation_metrics": {"score": 0.0, "is_deviating": False, "threshold": 1.5},
+            "health_risk_decision": inference.health_risk_decision or "HEALTHY",
+            "features_extracted_count": 67
+        }
+    elif len(x_buf) > 0:
+        # Fallback: run ML live only if no cached inference exists but we have data
+        logger.info(f"No cached inference for device {dev_id}, running live ML")
+        manager = get_ml_manager()
+        ml_res = manager.predict(x_buf, y_buf, z_buf)
 
-    # Build default ML result if nothing available
+    # Build consistent health status — SAME logic as herd overview
+    health = _build_health_status_from_inference(inference, summary)
+    
+    if stale:
+        # Device hasn't sent data in 24 hours
+        monitored_hours = 0.0
+        rum_hrs = 0.0
+        lying_hrs = 0.0
+        feed_hrs = 0.0
+        move_hrs = 0.0
+        health_risk = "NO_DATA"
+        is_heat = False
+        heat_prob_pct = 0
+        act_code = None
+        act_info = ACTIVITY_MAP.get("RES")
+    else:
+        monitored_hours = summary.monitored_hours if summary else 0.0
+        rum_hrs = summary.rumination_hours if summary else 0.0
+        lying_hrs = summary.lying_hours if summary else 0.0
+        feed_hrs = summary.feeding_hours if summary else 0.0
+        move_hrs = summary.moving_hours if summary else 0.0
+        health_risk = health["health_risk"]
+        is_heat = health["is_heat"]
+        heat_prob_pct = health["heat_prob_pct"]
+        act_code = health["act_code"]
+        act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
+
+    # If we still don't have ml_res, build a default
     if ml_res is None:
         ml_res = {
             "ml_engine_status": "NO_DATA",
-            "activity": {"code": "RES", "confidence": 0.0, "primary_activity": "RES"},
+            "activity": {"code": act_code, "confidence": 0.0, "primary_activity": act_code},
             "heat_detection": {"in_heat": False, "heat_probability": 0.0, "alert_level": "LOW"},
             "anomaly_detection": {"is_anomaly": False, "score": 0.0},
             "deviation_metrics": {"is_deviating": False},
-            "health_risk_decision": "HEALTHY"
+            "health_risk_decision": health_risk
         }
-        x_buf, y_buf, z_buf = [0]*80, [0]*80, [0]*80
+        if not x_buf:
+            x_buf, y_buf, z_buf = [0]*80, [0]*80, [0]*80
 
-    # Generate AI recommendation
-    recommendation = "All vital health parameters are normal."
-    if health_risk == "HIGH_RISK":
-        if is_heat or is_heat_summary:
-            recommendation = "CRITICAL: Cow is showing signs of being in heat. Action needed: Prepare for artificial insemination (breeding) in the next 12 hours."
-        elif ml_res.get("anomaly_detection", {}).get("is_anomaly"):
-            recommendation = "CRITICAL: Unusual movement patterns detected. Action needed: Physically check the cow for injury or sickness."
-        else:
-            recommendation = "CRITICAL: Severe health risk detected. Action needed: Physically check the cow immediately."
-    elif health_risk == "MONITOR":
-        if ml_res.get("heat_detection", {}).get("alert_level") == "MODERATE":
-            recommendation = "MONITOR: Cow might be coming into heat. Watch for more signs."
-        else:
-            recommendation = "MONITOR: Some health metrics are slightly off. Keep a close eye on her."
+    # Use health_risk from ML result if available and not stale
+    if not stale and ml_res.get("health_risk_decision"):
+        health_risk = ml_res["health_risk_decision"]
+        # Re-apply heat override for consistency
+        if is_heat and health_risk == "HEALTHY":
+            health_risk = "HIGH_RISK"
+
+    # Generate data-driven recommendation
+    recommendation = _generate_recommendation(health_risk, is_heat, ml_res, stale)
 
     mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
@@ -292,13 +343,14 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         "device_id": dev_id,
         "cowName": cow.name or f"Device #{cow.device_id}",
         "tagNumber": f"TAG-{cow.device_id}",
-        "breed": cow.breed or "Local Cattle",
-        "location": cow.location or "Rupnagar",
-        "weight": f"{cow.weight} kg" if cow.weight else "400 kg",
+        "breed": cow.breed or None,
+        "location": cow.location or None,
+        "weight": f"{cow.weight} kg" if cow.weight else None,
         "notes": cow.notes,
+        "isStale": stale,
         "currentActivity": {
             "code": act_code,
-            "name": act_info["name"],
+            "name": act_info["name"] if act_code else "No Recent Data",
             "color": act_info["color"],
             "icon": act_info["icon"]
         },
@@ -310,7 +362,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
             "movingHoursToday": move_hrs,
             "ruminationScore": min(100, int((rum_hrs / 8.0) * 100)) if rum_hrs else 0,
             "estrusProbabilityPercent": heat_prob_pct,
-            "isHeatDetected": is_heat or is_heat_summary,
+            "isHeatDetected": is_heat,
             "healthRecommendation": recommendation,
             "health_risk_decision": health_risk
         },
@@ -332,11 +384,54 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     }
 
 
+def _generate_recommendation(health_risk, is_heat, ml_res, stale):
+    """Generate recommendation text based purely on ML data — nothing hardcoded."""
+    if stale:
+        return "WARNING: No sensor data received in the last 24 hours. Check collar node battery and BLE connectivity."
+    
+    if health_risk == "NO_DATA":
+        return "Awaiting ML inference results. Sensor data is being processed by the background worker."
+    
+    if health_risk == "HIGH_RISK":
+        issues = []
+        actions = []
+        
+        if is_heat or ml_res.get("heat_detection", {}).get("alert_level") == "HIGH":
+            issues.append("signs of being in heat (estrus cycle)")
+            actions.append("prepare for artificial insemination (breeding) in the next 12 hours")
+            
+        if ml_res.get("anomaly_detection", {}).get("is_anomaly"):
+            issues.append("unusual movement patterns (anomaly detected)")
+            actions.append("physically check the cow for injury or sickness")
+            
+        if ml_res.get("deviation_metrics", {}).get("is_deviating"):
+            issues.append("behavior significantly different from herd baseline")
+            if "physically check the cow" not in str(actions):
+                actions.append("physically check the cow for injury or sickness")
+                
+        if issues:
+            issue_str = " and ".join(issues)
+            action_str = " and ".join(actions)
+            return f"CRITICAL: Cow is showing {issue_str}. Action needed: {action_str.capitalize()}."
+        else:
+            return "CRITICAL: Health risk detected by ML model. Action needed: Physically examine the animal immediately."
+            
+    elif health_risk == "MONITOR":
+        if ml_res.get("heat_detection", {}).get("alert_level") == "MODERATE":
+            return "MONITOR: Possible early signs of estrus detected. Monitor closely for next 6-12 hours."
+        elif ml_res.get("activity", {}).get("code") in ["ATT"]:
+            return "MONITOR: Aggressive behavior detected. Check for environmental stressors or social conflicts."
+        else:
+            return "MONITOR: Some health metrics require attention. Continue monitoring."
+    
+    return "All health parameters within normal range based on ML analysis."
+
+
 @router.get("/{cow_id}/activity-7day")
 def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     """
-    Get 7-day behavior trends from pre-computed daily summaries.
-    Single query — no ML inference at request time.
+    7-day behavior trends from pre-computed daily summaries.
+    Fully data-driven: shows actual ML-computed values.
     """
     if str(cow_id).isdigit():
         cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
@@ -356,9 +451,9 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     lying_list = []
     feed_list = []
     act_list = []
+    monitored_list = []
 
     if summaries:
-        # Results come in desc order, reverse for chronological
         for s in reversed(summaries):
             days.append(s.date.strftime("%a"))
             dates.append(s.date.strftime("%Y-%m-%d"))
@@ -366,6 +461,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             lying_list.append(round(s.lying_hours, 1))
             feed_list.append(round(s.feeding_hours, 1))
             act_list.append(round(s.moving_hours, 1))
+            monitored_list.append(round(s.monitored_hours, 1))
     else:
         # Fallback: compute from packet counts if no summaries exist yet
         sql = text("""
@@ -390,12 +486,13 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             days.append(d.strftime("%a"))
             dates.append(d.strftime("%Y-%m-%d"))
             pkt_count = r[1]
-            day_hours = (pkt_count * 8.0) / 3600.0
-            # Without ML data, estimate even distribution
-            rum_list.append(round(day_hours * 0.35, 1))
-            lying_list.append(round(day_hours * 0.30, 1))
-            feed_list.append(round(day_hours * 0.20, 1))
-            act_list.append(round(day_hours * 0.15, 1))
+            day_hours = round((pkt_count * 8.0) / 3600.0, 1)
+            # No ML data available yet — show 0 for all activities but show monitored hours
+            rum_list.append(0.0)
+            lying_list.append(0.0)
+            feed_list.append(0.0)
+            act_list.append(0.0)
+            monitored_list.append(day_hours)
 
     return {
         "cowId": cow_id,
@@ -406,5 +503,6 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         "lyingRestHours": lying_list,
         "feedingHours": feed_list,
         "activeHours": act_list,
+        "monitoredHours": monitored_list,
         "estrusAlerts": []
     }

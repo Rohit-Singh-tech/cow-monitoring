@@ -96,12 +96,12 @@ export default function HerdOverview({ cows, onSelectCow }) {
                         <div className="cow-card-name">
                           #{cow.device_id} - {cow.name}
                         </div>
-                        <div className="cow-card-tag">TAG: <strong style={{ color: 'var(--text-primary)' }}>{cow.tagNumber}</strong> • {cow.breed || 'Gir / Sahiwal'}</div>
+                        <div className="cow-card-tag">TAG: <strong style={{ color: 'var(--text-primary)' }}>{cow.tagNumber}</strong>{cow.breed ? ` • ${cow.breed}` : ''}</div>
                       </div>
                     </div>
 
-                    <span className={`health-badge ${cow.health_risk_decision || 'HEALTHY'}`}>
-                      {(cow.health_risk_decision || 'HEALTHY').replace('_', ' ')}
+                    <span className={`health-badge ${cow.health_risk_decision || 'NO_DATA'}`}>
+                      {cow.isStale ? 'NO DATA' : (cow.health_risk_decision || 'NO DATA').replace('_', ' ')}
                     </span>
                   </div>
 
