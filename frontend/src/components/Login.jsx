@@ -48,23 +48,24 @@ export default function Login({ onLogin }) {
         
         {/* Logo Section */}
         <div className="login-logo-container">
-          <div className="login-logo" style={{ width: '80px', height: '80px' }}>
+          <div className="login-logo">
             <img src="/cow-logo.png" alt="Cow Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
           </div>
           <h2 className="login-title">IIT Ropar AwaDH</h2>
+          <div className="login-subtitle">Gatewayless Cow Health Monitoring Platform</div>
         </div>
 
-        {/* Form Section */}
+        {/* Form Header */}
         <div className="login-header">
-          <h3>Authorization</h3>
+          <h3>SYSTEM AUTHENTICATION</h3>
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="input-group">
-            <label>USER CREDENTIALS (USERNAME / EMAIL)</label>
+            <label>OPERATOR CREDENTIALS (USERNAME / EMAIL)</label>
             <input 
               type="text" 
-              placeholder="Admin"
+              placeholder="e.g. Admin"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -85,7 +86,7 @@ export default function Login({ onLogin }) {
           {error && <div className="login-error">{error}</div>}
 
           <button type="submit" className="login-button" disabled={loading}>
-            {loading ? 'Authenticating...' : 'Authenticate'}
+            {loading ? 'Authenticating...' : 'Authenticate & Connect'}
           </button>
         </form>
 
@@ -93,7 +94,6 @@ export default function Login({ onLogin }) {
         <div className="login-footer">
           <a href="#">Register Operator</a>
           <a href="#">Recover Credentials</a>
-          <a href="#" className="underline-link">Resend Verification Link</a>
         </div>
       </div>
     </div>

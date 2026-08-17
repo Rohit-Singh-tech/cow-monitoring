@@ -21,7 +21,8 @@ export default function App() {
   const [accelBuffer, setAccelBuffer] = useState({ x: [], y: [], z: [], mag: [], labels: [] });
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // Initialize sidebar open on desktop, closed on mobile
+  const [isSidebarOpen, setIsSidebarOpen] = useState(typeof window !== 'undefined' ? window.innerWidth > 768 : true);
   const [theme, setTheme] = useState(localStorage.getItem('cow_theme') || 'dark');
 
   useEffect(() => {
@@ -37,21 +38,57 @@ export default function App() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
-  // 1. Fetch initial cow list
+  // Helper to sync single cow update into cows array
+  const syncCowIntoList = (cowData) => {
+    if (!cowData) return;
+    setCows(prevCows => prevCows.map(c => {
+      if (String(c.id) === String(cowData.cowId || cowData.id) || String(c.device_id) === String(cowData.device_id)) {
+        const health = cowData.healthStatus || {};
+        const act = cowData.currentActivity || {};
+        const risk = health.health_risk_decision || c.health_risk_decision || 'HEALTHY';
+        return {
+          ...c,
+          currentActivity: act.code || c.currentActivity,
+          health_risk_decision: risk,
+          healthStatus: (health.isHeatDetected || risk === 'HIGH_RISK') ? 'HIGH_RISK' : risk,
+          ruminationHoursToday: health.ruminationHoursToday !== undefined ? health.ruminationHoursToday : c.ruminationHoursToday,
+          lyingHoursToday: health.lyingHoursToday !== undefined ? health.lyingHoursToday : c.lyingHoursToday,
+          feedingHoursToday: health.feedingHoursToday !== undefined ? health.feedingHoursToday : c.feedingHoursToday,
+          movingHoursToday: health.movingHoursToday !== undefined ? health.movingHoursToday : c.movingHoursToday,
+          estrusProbability: health.estrusProbabilityPercent !== undefined ? health.estrusProbabilityPercent : c.estrusProbability
+        };
+      }
+      return c;
+    }));
+  };
+
+  // 1. Fetch and refresh cow list
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetch(`${API_BASE}/api/cows`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.cows && data.cows.length > 0) {
-          setCows(data.cows);
-          if (!currentCowId) {
-            setCurrentCowId(data.cows[0].id);
+    let isSubscribed = true;
+
+    const fetchCows = () => {
+      fetch(`${API_BASE}/api/cows`)
+        .then(res => res.json())
+        .then(data => {
+          if (isSubscribed && data.success && data.cows && data.cows.length > 0) {
+            setCows(data.cows);
+            if (!currentCowId) {
+              setCurrentCowId(data.cows[0].id);
+            }
           }
-        }
-      })
-      .catch(err => console.error('Error fetching cows:', err));
-  }, [isAuthenticated]);
+        })
+        .catch(err => console.error('Error fetching cows:', err));
+    };
+
+    fetchCows();
+
+    const interval = setInterval(fetchCows, 10000);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [isAuthenticated, activeTab]);
 
   useEffect(() => {
     if (!currentCowId || !isAuthenticated) return;
@@ -64,6 +101,7 @@ export default function App() {
         if (isSubscribed && dataCurr.success) {
           setCurrentData(dataCurr);
           if (dataCurr.accelBuffer) setAccelBuffer(dataCurr.accelBuffer);
+          syncCowIntoList(dataCurr);
         }
       } catch (err) {
         console.error('Error loading cow data:', err);
@@ -109,10 +147,11 @@ export default function App() {
         const data = await res.json();
         if (isSubscribed && data.success) {
           if (data.accelBuffer) setAccelBuffer(data.accelBuffer);
-          if (data.healthStatus) setCurrentData(data);
+          setCurrentData(data);
+          syncCowIntoList(data);
         }
       } catch (e) { }
-    }, 600000);
+    }, 5000);
 
     return () => {
       isSubscribed = false;
@@ -135,7 +174,6 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         alert(`⚡ BLE Data Dump Completed for Cow #${currentData?.device_id || currentCowId}!\n2,500 packets replayed from SPI Flash.`);
-        // Manually refresh data
         fetch(`${API_BASE}/api/cow/${currentCowId}/current`)
           .then(r => r.json())
           .then(d => {
@@ -162,24 +200,30 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* Translucent Pastoral Cow Background Watermark */}
+      <div className="pastoral-bg-watermark"></div>
+
       {/* Left Sidebar */}
       <TabBar
         activeTab={activeTab}
-        onSelectTab={(tab) => { setActiveTab(tab); setIsSidebarOpen(false); }}
+        onSelectTab={(tab) => { 
+          setActiveTab(tab); 
+          if (window.innerWidth <= 768) setIsSidebarOpen(false); 
+        }}
         onLogout={handleLogout}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
       />
 
       {/* Main Content Column */}
-      <div className="main-column" onClick={() => isSidebarOpen && setIsSidebarOpen(false)}>
+      <div className="main-column">
         {/* Top Navbar */}
         <Navbar
           cows={cows}
           currentCowId={currentCowId}
           onSelectCow={handleSelectCow}
           onTriggerDump={handleTriggerDump}
-          onToggleMenu={() => setIsSidebarOpen(!isSidebarOpen)}
+          onToggleMenu={() => setIsSidebarOpen(prev => !prev)}
           isSidebarOpen={isSidebarOpen}
           theme={theme}
           onToggleTheme={toggleTheme}
@@ -191,6 +235,7 @@ export default function App() {
             <LiveCowMonitor
               currentData={currentData}
               accelBuffer={accelBuffer}
+              theme={theme}
             />
           )}
 

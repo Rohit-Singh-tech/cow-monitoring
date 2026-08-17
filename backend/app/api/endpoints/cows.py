@@ -51,9 +51,6 @@ def get_points_for_device(db: Session, device_id: str):
         LIMIT 1
     """)
     header = db.execute(header_sql, {"dev": str(device_id)}).fetchone()
-    
-    if not header:
-        header = db.execute(text("SELECT id, timestamp, total_packets, packet_id_num FROM datalogger_headers ORDER BY id DESC LIMIT 1")).fetchone()
 
     if not header:
         res = (None, [], [], [], [])
@@ -87,10 +84,10 @@ def compute_health_vitals(db: Session, cow: TagRegistry):
     cache_key = dev_id
     now = time.time()
     
-    # 60 second cache to avoid blocking API with N+1 ML inferences
+    # 5 second cache to stay in sync with live telemetry stream
     if cache_key in _VITALS_CACHE:
         cached_time, data = _VITALS_CACHE[cache_key]
-        if now - cached_time < 60.0:
+        if now - cached_time < 5.0:
             return data
             
     # Query today's datalogger packets count from database
@@ -175,7 +172,7 @@ def get_herd_overview(db: Session = Depends(get_db)):
     """
     Fetch farm herd overview focusing strictly on HEALTH parameters across all registered cattle collar nodes.
     """
-    cows = db.query(TagRegistry).all()
+    cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
     if not cows:
         return []
         
@@ -189,25 +186,34 @@ def get_herd_overview(db: Session = Depends(get_db)):
         if len(x_buf) > 0:
             ml_pred = manager.predict(x_buf, y_buf, z_buf)
             act_code = ml_pred["activity"]["code"]
+            act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
             health_risk = ml_pred.get("health_risk_decision", "HEALTHY")
+            heat_prob_pct = int(ml_pred["heat_detection"]["heat_probability"] * 100)
+            is_heat = ml_pred["heat_detection"]["in_heat"]
         else:
             act_code = "RES"
+            act_info = ACTIVITY_MAP.get("RES")
             health_risk = "HEALTHY"
+            heat_prob_pct = 0
+            is_heat = False
             
         result.append({
             "id": c.id,
             "device_id": str(c.device_id),
             "tagNumber": f"TAG-{c.device_id}",
             "name": c.name or f"Cattle #{c.device_id}",
-            "breed": c.breed or "Native Breed",
+            "breed": c.breed or "Gir / Sahiwal",
             "location": c.location or "Rupnagar Farm",
             "weight": f"{c.weight} kg" if c.weight else "400 kg",
-            "healthStatus": "ESTRUS_ALERT" if health_meta["is_heat"] else "HEALTHY",
+            "healthStatus": "HIGH_RISK" if (health_risk == "HIGH_RISK" or is_heat or health_meta["is_heat"]) else health_risk,
             "health_risk_decision": health_risk,
             "currentActivity": act_code,
+            "activityName": act_info["name"],
             "ruminationHoursToday": health_meta["rum_hrs"],
             "lyingHoursToday": health_meta["lying_hrs"],
-            "estrusProbability": health_meta["heat_prob"],
+            "feedingHoursToday": health_meta["feed_hrs"],
+            "movingHoursToday": health_meta["move_hrs"],
+            "estrusProbability": heat_prob_pct,
             "lastSeen": ts.isoformat() if ts else None
         })
         
@@ -219,10 +225,9 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     """
     Get live health dashboard telemetry, actual raw XYZ motion buffer, and ML predictions directly from PostgreSQL database.
     """
+    cow = None
     if str(cow_id).isdigit():
         cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
-    else:
-        cow = None
         
     if not cow:
         cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
@@ -237,51 +242,63 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     ts, x_buf, y_buf, z_buf, pts = get_points_for_device(db, cow.device_id)
     
     if len(x_buf) == 0:
+        act_code = "RES"
+        act_info = ACTIVITY_MAP.get("RES")
+        is_heat = False
+        heat_prob_pct = 0
+        health_risk = "HEALTHY"
+        recommendation = "All vital health parameters are normal. Awaiting node telemetry."
+        ml_res = {
+            "activity": {"code": "RES", "confidence": 0.0, "primary_activity": "RES"},
+            "heat_detection": {"in_heat": False, "heat_probability": 0.0, "alert_level": "LOW"},
+            "anomaly_detection": {"is_anomaly": False, "score": 0.0},
+            "deviation_metrics": {"is_deviating": False},
+            "health_risk_decision": "HEALTHY"
+        }
         x_buf, y_buf, z_buf = [0]*80, [0]*80, [0]*80
+    else:
+        manager = get_ml_manager()
+        ml_res = manager.predict(x_buf, y_buf, z_buf)
+        act_code = ml_res["activity"]["code"]
+        act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
+        is_heat = ml_res["heat_detection"]["in_heat"]
+        heat_prob_pct = int(ml_res["heat_detection"]["heat_probability"] * 100)
+        health_risk = ml_res.get("health_risk_decision", "HEALTHY")
 
-    manager = get_ml_manager()
-    ml_res = manager.predict(x_buf, y_buf, z_buf)
-
-    act_code = ml_res["activity"]["code"]
-    act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES"))
-    is_heat = ml_res["heat_detection"]["in_heat"]
-    heat_prob_pct = int(ml_res["heat_detection"]["heat_probability"] * 100)
-    health_risk = ml_res.get("health_risk_decision", "HEALTHY")
-
-    # Generate AI recommendation based on exact risk factors
-    recommendation = "All vital health parameters are normal."
-    
-    if health_risk == "HIGH_RISK":
-        issues = []
-        actions = []
+        # Generate AI recommendation based on exact risk factors
+        recommendation = "All vital health parameters are normal."
         
-        if is_heat or ml_res.get("heat_detection", {}).get("alert_level") == "HIGH":
-            issues.append("signs of being in heat")
-            actions.append("prepare for artificial insemination (breeding) in the next 12 hours")
+        if health_risk == "HIGH_RISK":
+            issues = []
+            actions = []
             
-        if ml_res.get("anomaly_detection", {}).get("is_anomaly"):
-            issues.append("unusual movement patterns")
-            actions.append("physically check the cow for injury or sickness")
-            
-        if ml_res.get("deviation_metrics", {}).get("is_deviating"):
-            issues.append("behavior that is very different from the rest of the herd")
-            if "physically check the cow for injury or sickness" not in actions:
+            if is_heat or ml_res.get("heat_detection", {}).get("alert_level") == "HIGH":
+                issues.append("signs of being in heat")
+                actions.append("prepare for artificial insemination (breeding) in the next 12 hours")
+                
+            if ml_res.get("anomaly_detection", {}).get("is_anomaly"):
+                issues.append("unusual movement patterns")
                 actions.append("physically check the cow for injury or sickness")
                 
-        if issues:
-            issue_str = " and ".join(issues)
-            action_str = " and ".join(actions)
-            recommendation = f"CRITICAL: Cow is showing {issue_str}. Action needed: {action_str.capitalize()}."
-        else:
-            recommendation = "CRITICAL: Severe health risk detected. Action needed: Physically check the cow immediately."
-            
-    elif health_risk == "MONITOR":
-        if act_code == "OTHER_ACTIVITY":
-            recommendation = "MONITOR: Cow is showing unusual activity. Keep a close eye on her."
-        elif ml_res.get("heat_detection", {}).get("alert_level") == "MODERATE":
-            recommendation = "MONITOR: Cow might be coming into heat. Watch for more signs."
-        else:
-            recommendation = "MONITOR: Some health metrics are slightly off. Keep a close eye on her."
+            if ml_res.get("deviation_metrics", {}).get("is_deviating"):
+                issues.append("behavior that is very different from the rest of the herd")
+                if "physically check the cow for injury or sickness" not in actions:
+                    actions.append("physically check the cow for injury or sickness")
+                    
+            if issues:
+                issue_str = " and ".join(issues)
+                action_str = " and ".join(actions)
+                recommendation = f"CRITICAL: Cow is showing {issue_str}. Action needed: {action_str.capitalize()}."
+            else:
+                recommendation = "CRITICAL: Severe health risk detected. Action needed: Physically check the cow immediately."
+                
+        elif health_risk == "MONITOR":
+            if act_code == "OTHER_ACTIVITY":
+                recommendation = "MONITOR: Cow is showing unusual activity. Keep a close eye on her."
+            elif ml_res.get("heat_detection", {}).get("alert_level") == "MODERATE":
+                recommendation = "MONITOR: Cow might be coming into heat. Watch for more signs."
+            else:
+                recommendation = "MONITOR: Some health metrics are slightly off. Keep a close eye on her."
 
     mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]

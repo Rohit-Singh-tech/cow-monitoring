@@ -4,9 +4,9 @@ const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring
 
 export default function HardwareSpecs({ currentCowId, currentData, onReloadData }) {
   const [terminalLogs, setTerminalLogs] = useState([
-    { time: new Date().toLocaleTimeString(), text: '[SYSTEM INIT] Collar Node nRF52832 powered on. Entering BLE Scannable Beacon Mode.', type: 'warn' },
-    { time: new Date().toLocaleTimeString(), text: '[LOG] Sampling LIS3DH accelerometer @ 10 Hz (100ms interval).', type: 'log' },
-    { time: new Date().toLocaleTimeString(), text: '[LOG] SPI Flash Write Index: 14250 / 32768. Circular Ring Buffer ACTIVE.', type: 'log' }
+    { time: new Date().toLocaleTimeString(), text: '[DEVICE INIT] Collar Node nRF52832 online. BLE Beacon active.', type: 'warn' },
+    { time: new Date().toLocaleTimeString(), text: '[LOG] Sampling 3-axis accelerometer @ 10 Hz (100ms window).', type: 'log' },
+    { time: new Date().toLocaleTimeString(), text: '[LOG] On-Collar SPI Flash: Ring Buffer active.', type: 'log' }
   ]);
 
   const addTermLine = (text, type = 'log') => {
@@ -14,7 +14,7 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
   };
 
   const handleSendDump = async () => {
-    addTermLine('[BLE TRIGGER SENT] Broadcasting Data Dump Signature: 0x59 0x00 0xBB 0xCC...', 'sent');
+    addTermLine('[BLE SYNC] Sending wireless data retrieval request...', 'sent');
     try {
       const res = await fetch(`${API_BASE}/api/ble/trigger-dump`, {
         method: 'POST',
@@ -23,20 +23,19 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
       });
       const data = await res.json();
       if (data.success) {
-        addTermLine('[NODE ACK] Knock-Knock Signature Verified! Switch to Data Replay Mode.', 'recv');
-        addTermLine('[BLE REPLAY] Transmitting 2,500 SPI Flash Packets (640 KB) via Extended Advertising...', 'hex');
-        addTermLine('[SYNC COMPLETE] Mobile database updated. Read Index advanced.', 'warn');
+        addTermLine('[ACK] Collar acknowledged! Streaming stored packets via BLE...', 'recv');
+        addTermLine('[SYNC COMPLETE] Farm database updated with replayed readings.', 'warn');
         if (onReloadData) onReloadData(currentCowId);
       }
     } catch (e) {
-      addTermLine('[ERROR] Failed to communicate with BLE Node backend', 'warn');
+      addTermLine('[ERROR] Communication with collar node failed.', 'warn');
     }
   };
 
   const handleSendReset = async () => {
-    if (!window.confirm('⚠️ Are you sure you want to send Memory Reset Signature 0x59 0x00 0xFF 0xFF? This erases SPI Flash!')) return;
+    if (!window.confirm('⚠️ Are you sure you want to clear on-collar flash storage for this node?')) return;
 
-    addTermLine('[BLE RESET SENT] Broadcasting Reset Signature: 0x59 0x00 0xFF 0xFF...', 'sent');
+    addTermLine('[RESET] Sending memory clear command...', 'sent');
     try {
       const res = await fetch(`${API_BASE}/api/ble/trigger-reset`, {
         method: 'POST',
@@ -45,11 +44,11 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
       });
       const data = await res.json();
       if (data.success) {
-        addTermLine('[NODE RESET ACK] Flash state sector erased. Write & Read Index reset to 0!', 'warn');
+        addTermLine('[ACK] Flash storage buffer reset to index 0.', 'warn');
         if (onReloadData) onReloadData(currentCowId);
       }
     } catch (e) {
-      addTermLine('[ERROR] Failed to send reset signature', 'warn');
+      addTermLine('[ERROR] Failed to send reset signal.', 'warn');
     }
   };
 
@@ -57,84 +56,118 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
 
   return (
     <div>
+      <div style={{ marginBottom: '1.25rem' }}>
+        <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <i className="fa-solid fa-microchip" style={{ color: 'var(--accent-sky)' }}></i>
+          HARDWARE SPECIFICATIONS & DIAGNOSTICS
+        </h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.825rem', marginTop: '0.15rem' }}>
+          Gateway-less edge architecture, battery equations, and BLE memory specifications (AWaDH IIT Ropar).
+        </p>
+      </div>
+
       <div className="grid-2col">
         
-        {/* Ring Buffer graphic */}
+        {/* Ring Buffer Graphic & Card */}
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="card-header-box">
             <div className="card-title">
-              <i className="fa-solid fa-hard-drive"></i>
-              SPI Flash Circular Ring Buffer
+              <i className="fa-solid fa-hard-drive" style={{ color: 'var(--accent-sky)' }}></i>
+              ONBOARD SPI FLASH RING BUFFER
             </div>
+            <span className="code-badge" style={{ background: 'rgba(6, 182, 212, 0.25)', color: 'var(--accent-cyan)', border: '1px solid rgba(56, 189, 248, 0.4)' }}>SPI Ring Buffer</span>
           </div>
           <div className="card-body" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div className="ring-buffer-graphic">
-              <div className="circle-ring">
-                <div className="circle-ring-inner">
-                  <div className="pct">{hw.flashUsagePercent}%</div>
-                  <div className="lbl">Storage Filled</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                    {hw.flashUsedPackets?.toLocaleString()} / {hw.flashTotalPackets?.toLocaleString()} Packets
-                  </div>
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1rem 0' }}>
+              <div style={{ width: '130px', height: '130px', borderRadius: '50%', border: '8px solid rgba(56, 189, 248, 0.2)', borderTopColor: 'var(--accent-sky)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{hw.flashUsagePercent}%</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--accent-sky)', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>BUFFER OCCUPIED</div>
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.75rem', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                {hw.flashUsedPackets?.toLocaleString()} / {hw.flashTotalPackets?.toLocaleString()} Packets
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.5rem', background: 'rgba(15, 23, 42, 0.6)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: 'var(--bg-elevated)', padding: '0.95rem 1.15rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', fontSize: '0.825rem' }}>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Total Capacity:</div>
-                <strong style={{ fontFamily: 'JetBrains Mono', color: 'var(--primary-cyan)' }}>8 MB (32,768 Pkts)</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Total Capacity:</div>
+                <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-sky)', fontSize: '0.9rem' }}>8 MB (32,768 Packets)</strong>
               </div>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Duration Limit:</div>
-                <strong style={{ fontFamily: 'JetBrains Mono', color: 'var(--primary-emerald)' }}>72.8 Hrs (~3 Days)</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Offline Retention:</div>
+                <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-emerald)', fontSize: '0.9rem' }}>72.8 Hours (~3 Days)</strong>
               </div>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Packet Size:</div>
-                <strong style={{ fontFamily: 'JetBrains Mono' }}>256 Bytes (240B XYZ)</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Packet Format:</div>
+                <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>256 Bytes (240B XYZ)</strong>
               </div>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Overwrite Behavior:</div>
-                <strong style={{ color: 'var(--warning-amber)' }}>Auto Wrap-around</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Buffer Policy:</div>
+                <strong style={{ color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)' }}>Circular Overwrite</strong>
               </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.65rem', marginTop: '1rem' }}>
+              <button className="btn btn-primary" onClick={handleSendDump} style={{ flex: 1, height: '36px' }}>
+                <i className="fa-solid fa-cloud-arrow-down"></i> TRIGGER DUMP (0x5900BBCC)
+              </button>
+              <button className="btn btn-danger" onClick={handleSendReset} style={{ flex: 1, height: '36px' }}>
+                <i className="fa-solid fa-rotate-left"></i> RESET BUFFER (0x5900FFFF)
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Battery Math Calculation */}
+        {/* Battery Estimation */}
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="card-header-box">
             <div className="card-title">
-              <i className="fa-solid fa-battery-full"></i>
-              Battery Life Equation
+              <i className="fa-solid fa-battery-full" style={{ color: 'var(--accent-emerald)' }}></i>
+              BATTERY LIFESPAN CALCULATION
             </div>
+            <span className="code-badge" style={{ background: 'rgba(16, 185, 129, 0.25)', color: 'var(--accent-emerald)', border: '1px solid rgba(52, 211, 153, 0.4)' }}>{hw.batteryPercent}% ({hw.batteryVoltage}V)</span>
           </div>
           <div className="card-body" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div style={{ background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1.5rem', borderRadius: 'var(--radius-sm)', textAlign: 'center', marginBottom: '1.5rem' }}>
-              <h4 style={{ color: 'var(--primary-emerald)', fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-                <i className="fa-solid fa-calculator"></i> Runtime = Capacity ÷ Current
+            <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', padding: '1rem', borderRadius: 'var(--radius-sm)', textAlign: 'center', marginBottom: '0.85rem' }}>
+              <h4 style={{ color: 'var(--accent-emerald)', fontSize: '0.9rem', fontWeight: 800, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.45rem', fontFamily: 'var(--font-mono)' }}>
+                <i className="fa-solid fa-calculator"></i> Runtime = Cell Capacity / Average Current
               </h4>
-              <p style={{ fontFamily: 'JetBrains Mono', fontSize: '0.95rem', color: '#a7f3d0', margin: 0 }}>
-                5400 mAh ÷ 0.09816 mA = 55,012 Hours
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                5400 mAh / 0.09816 mA = 55,012 Hours
               </p>
             </div>
             
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'rgba(15, 23, 42, 0.6)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: 'var(--bg-elevated)', padding: '0.95rem 1.15rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', fontSize: '0.825rem' }}>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Battery Capacity:</div>
-                <strong>5400 mAh (3.7V Li-Ion)</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Li-Ion Capacity:</div>
+                <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>5400 mAh (3.7V)</strong>
               </div>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Average Current:</div>
-                <strong>98.16 µA (0.09816 mA)</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Average Current Draw:</div>
+                <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>98.16 µA (0.098 mA)</strong>
               </div>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Total Runtime:</div>
-                <strong>2,292 Days</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Operational Days:</div>
+                <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>2,292 Days</strong>
               </div>
               <div>
-                <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Estimated Lifespan:</div>
-                <strong style={{ color: 'var(--primary-emerald)', fontSize: '1.1rem' }}>~6.28 Years</strong>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontWeight: 700 }}>Estimated Lifespan:</div>
+                <strong style={{ color: 'var(--accent-emerald)', fontSize: '1rem', fontFamily: 'var(--font-mono)', fontWeight: 800 }}>~6.28 Years</strong>
+              </div>
+            </div>
+
+            {/* Diagnostic Terminal */}
+            <div style={{ marginTop: '0.95rem' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-primary)', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.35rem', fontFamily: 'var(--font-mono)' }}>
+                UART / BLE REPLAY LOG TERMINAL
+              </div>
+              <div className="terminal-box">
+                {terminalLogs.map((tl, i) => (
+                  <div key={i} className={`terminal-line ${tl.type}`}>
+                    <span style={{ color: 'var(--text-muted)', marginRight: '0.4rem', fontWeight: 600 }}>[{tl.time}]</span>
+                    {tl.text}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -144,32 +177,32 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
         <div className="glass-panel">
           <div className="card-header-box">
             <div className="card-title">
-              <i className="fa-solid fa-microchip"></i>
-              Microcontroller & Sensor
+              <i className="fa-solid fa-microchip" style={{ color: 'var(--accent-sky)' }}></i>
+              MICROCONTROLLER & SENSOR SPECS
             </div>
           </div>
           <div className="card-body">
-            <ul style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.8', listStyleType: 'none', padding: 0, margin: 0 }}>
-              <li style={{ marginBottom: '0.75rem' }}><strong style={{ color: 'var(--primary-cyan)' }}>LIS3DH Accelerometer:</strong> 3-axis ultra low-power motion sensing @ 10 Hz.</li>
-              <li style={{ marginBottom: '0.75rem' }}><strong style={{ color: 'var(--primary-cyan)' }}>nRF52832 MCU:</strong> ARM Cortex-M4 with integrated BLE radio.</li>
-              <li><strong style={{ color: 'var(--primary-cyan)' }}>SPI Flash Memory:</strong> Non-volatile ring buffer storing 256-byte packets.</li>
+            <ul style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.8', listStyleType: 'none', padding: 0, margin: 0, fontWeight: 500 }}>
+              <li style={{ marginBottom: '0.6rem' }}><strong style={{ color: 'var(--text-primary)' }}>LIS3DH Accelerometer:</strong> Ultra low-power 3-axis motion sampling @ 10 Hz.</li>
+              <li style={{ marginBottom: '0.6rem' }}><strong style={{ color: 'var(--text-primary)' }}>nRF52832 SoC:</strong> ARM Cortex-M4 with integrated BLE 5.0 radio transceiver.</li>
+              <li><strong style={{ color: 'var(--text-primary)' }}>SPI Flash Storage:</strong> Non-volatile memory holding 256-byte telemetry chunks.</li>
             </ul>
           </div>
         </div>
 
-        {/* Collar & Enclosure */}
+        {/* Enclosure */}
         <div className="glass-panel">
           <div className="card-header-box">
             <div className="card-title">
-              <i className="fa-solid fa-shield-cat"></i>
-              Collar & Enclosure
+              <i className="fa-solid fa-shield-halved" style={{ color: 'var(--accent-emerald)' }}></i>
+              PHYSICAL ENCLOSURE & PROTOCOLS
             </div>
           </div>
           <div className="card-body">
-            <ul style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.8', listStyleType: 'none', padding: 0, margin: 0 }}>
-              <li style={{ marginBottom: '0.75rem' }}><strong style={{ color: 'var(--accent-purple)' }}>Collar Mount:</strong> Lightweight, smooth-edged IP67 weather-resistant design.</li>
-              <li style={{ marginBottom: '0.75rem' }}><strong style={{ color: 'var(--accent-purple)' }}>Animal Comfort:</strong> Rounded corners preventing friction or injury.</li>
-              <li><strong style={{ color: 'var(--accent-purple)' }}>Gatewayless:</strong> Mobile app acts as temporary gateway on demand.</li>
+            <ul style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.8', listStyleType: 'none', padding: 0, margin: 0, fontWeight: 500 }}>
+              <li style={{ marginBottom: '0.6rem' }}><strong style={{ color: 'var(--text-primary)' }}>IP67 Enclosure:</strong> Ruggedized, moisture and dirt sealed housing for cattle pasture.</li>
+              <li style={{ marginBottom: '0.6rem' }}><strong style={{ color: 'var(--text-primary)' }}>Weight & Ergonomics:</strong> Lightweight neck harness causing zero bovine irritation.</li>
+              <li><strong style={{ color: 'var(--text-primary)' }}>BLE 5.0 Wireless:</strong> High throughput burst transfers on demand.</li>
             </ul>
           </div>
         </div>

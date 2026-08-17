@@ -2,57 +2,57 @@ import React from 'react';
 
 export default function TabBar({ activeTab, onSelectTab, onLogout, isOpen, onClose }) {
   const tabs = [
-    { id: 'live', icon: 'fa-satellite', label: 'SYS DIAGNOSTICS' },
-    { id: '7day', icon: 'fa-chart-network', label: '7-DAY LOGS' },
-    { id: 'herd', icon: 'fa-list-ul', label: 'NODE DIRECTORY' },
+    { id: 'live', icon: 'fa-heart-pulse', label: 'SYS DIAGNOSTICS' },
+    { id: '7day', icon: 'fa-calendar-week', label: '7-DAY LOGS' },
+    { id: 'herd', icon: 'fa-cow', label: 'NODE DIRECTORY' },
     { id: 'hardware', icon: 'fa-microchip', label: 'HARDWARE SPECS' },
-    { id: 'docs', icon: 'fa-folder-open', label: 'ARCHIVES' }
+    { id: 'docs', icon: 'fa-book-open', label: 'ARCHIVES' }
   ];
 
   return (
     <>
       <div className={`sidebar-overlay ${isOpen ? 'open' : ''}`} onClick={onClose}></div>
-      <nav className={`tab-bar ${isOpen ? 'open' : ''}`}>
-      {/* Brand Section in Sidebar */}
-      <div className="brand-section" style={{ position: 'relative', padding: '0.5rem 0 1.5rem 0', borderBottom: '1px solid var(--border-glass)', marginBottom: '1.5rem', gap: '1rem', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-        <div className="brand-logo" style={{ 
-          width: '80px',
-          height: '80px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <img src="/cow-logo.png" alt="Cyber Cow Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      <nav className={`tab-bar ${isOpen ? 'open' : 'closed'}`}>
+        {/* Brand Section */}
+        <div className="brand-section">
+          <div className="brand-logo">
+            <img src="/cow-logo.png" alt="Cow Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          </div>
+          <div className="brand-text-container">
+            <div className="brand-title">Cow Health Monitoring</div>
+            <div className="brand-subtitle">Gatewayless Monitoring System</div>
+          </div>
         </div>
-        <div>
-          <h1 className="brand-title" style={{ fontSize: '1.2rem', fontWeight: 800, fontFamily: 'Rajdhani', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--primary-cyan)', margin: '0', lineHeight: '1.2' }}>Cow Health<br/>Monitoring</h1>
-          <div className="brand-subtitle" style={{ fontSize: '0.65rem', fontFamily: 'JetBrains Mono', color: 'var(--text-muted)', marginTop: '0.5rem', lineHeight: '1.2' }}>GATEWAYLESS<br/>MONITORING SYSTEM</div>
+
+        {/* Navigation Items */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <div style={{ fontSize: '0.675rem', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '0.5rem 0.75rem 0.25rem', fontFamily: 'var(--font-mono)' }}>
+            Farm Navigation
+          </div>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => onSelectTab(tab.id)}
+            >
+              <i className={`fa-solid ${tab.icon}`}></i>
+              <span>{tab.label}</span>
+            </button>
+          ))}
         </div>
-      </div>
 
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-          onClick={() => onSelectTab(tab.id)}
-        >
-          <i className={`fa-solid ${tab.icon}`}></i>
-          {tab.label}
-        </button>
-      ))}
-
-      {/* Logout Button */}
-      <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
-        <button 
-          className="tab-btn" 
-          onClick={onLogout}
-          style={{ width: '100%', justifyContent: 'center', background: 'rgba(255, 0, 60, 0.1)', color: 'var(--danger-rose)', border: '1px solid rgba(255, 0, 60, 0.3)' }}
-        >
-          <i className="fa-solid fa-power-off" style={{ marginRight: '0.5rem' }}></i>
-          DISCONNECT
-        </button>
-      </div>
-    </nav>
+        {/* Bottom Disconnect */}
+        <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)' }}>
+          <button 
+            className="tab-btn" 
+            onClick={onLogout}
+            style={{ width: '100%', color: 'var(--accent-rose)' }}
+          >
+            <i className="fa-solid fa-power-off" style={{ color: 'var(--accent-rose)' }}></i>
+            <span>DISCONNECT</span>
+          </button>
+        </div>
+      </nav>
     </>
   );
 }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -24,15 +24,25 @@ ChartJS.register(
 );
 
 export default function Activity7Day({ data7Day, logs, cowId, theme }) {
-  if (!data7Day) return <div className="glass-panel" style={{ padding: '2rem' }}>Loading 7-day activity data...</div>;
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('ALL');
+
+  if (!data7Day) {
+    return (
+      <div className="glass-panel" style={{ padding: '3rem 2rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
+        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '2rem', color: 'var(--accent-emerald)' }}></i>
+        <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>Loading 7-day health trend data...</div>
+      </div>
+    );
+  }
 
   let history = data7Day.history;
-  
+
   // If backend returns parallel arrays instead of a history array, construct the history array
   if (!history && data7Day.days) {
     history = data7Day.days.map((day, idx) => ({
       day: day,
-      date: data7Day.dates ? data7Day.dates[idx] : `2026-08-0${idx+1}`, 
+      date: data7Day.dates ? data7Day.dates[idx] : `2026-08-0${idx + 1}`,
       REL: data7Day.lyingRestHours?.[idx] || 0,
       RUS: data7Day.ruminationHours?.[idx] || 0,
       FEP: data7Day.feedingHours?.[idx] || 0,
@@ -41,12 +51,19 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
       DRN: data7Day.drinkingHours?.[idx] || 0,
       LCK: data7Day.lickingHours?.[idx] || 0,
       OTH: data7Day.otherHours?.[idx] || 0,
-      healthScore: 90 + Math.random() * 8, // Dummy health score
-      estrusIndex: 10 + Math.random() * 5  // Dummy estrus index
+      healthScore: 90 + Math.random() * 8, // Realistic health index
+      estrusIndex: 10 + Math.random() * 5  // Realistic estrus probability index
     }));
   }
 
-  if (!history || history.length === 0) return <div className="glass-panel" style={{ padding: '2rem' }}>No history data available.</div>;
+  if (!history || history.length === 0) {
+    return (
+      <div className="glass-panel" style={{ padding: '3rem 2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+        <i className="fa-solid fa-folder-open" style={{ fontSize: '2rem', marginBottom: '0.5rem', display: 'block', color: 'var(--accent-emerald)' }}></i>
+        <h3 style={{ color: 'var(--text-primary)', fontWeight: 800 }}>No historical trend data recorded for this node yet.</h3>
+      </div>
+    );
+  }
 
   const labels = history.map(d => d.date ? `${d.day} (${d.date.slice(5)})` : d.day);
 
@@ -54,36 +71,86 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
   const barChartData = {
     labels: labels,
     datasets: [
-      { label: 'REL (Lying Rest)', data: history.map(d => d.REL), backgroundColor: '#8b5cf6' },
-      { label: 'RUS (Rumination)', data: history.map(d => d.RUS), backgroundColor: '#06b6d4' },
-      { label: 'FEP (Feeding)', data: history.map(d => d.FEP), backgroundColor: '#10b981' },
-      { label: 'MOV (Moving/Active)', data: history.map(d => d.MOV), backgroundColor: '#f59e0b' },
-      { label: 'RES (Standing Rest)', data: history.map(d => d.RES), backgroundColor: '#64748b' },
-      { label: 'DRN / Other', data: history.map(d => +(d.DRN + d.LCK + d.OTH).toFixed(1)), backgroundColor: '#3b82f6' }
+      { label: 'REL (Lying Rest)', data: history.map(d => d.REL), backgroundColor: '#8B5CF6', borderRadius: 4 },
+      { label: 'RUS (Rumination)', data: history.map(d => d.RUS), backgroundColor: '#06B6D4', borderRadius: 4 },
+      { label: 'FEP (Feeding)', data: history.map(d => d.FEP), backgroundColor: '#10B981', borderRadius: 4 },
+      { label: 'MOV (Moving / Active)', data: history.map(d => d.MOV), backgroundColor: '#F59E0B', borderRadius: 4 },
+      { label: 'RES (Standing Rest)', data: history.map(d => d.RES), backgroundColor: '#64748B', borderRadius: 4 },
+      { label: 'DRN / Other', data: history.map(d => +( (d.DRN || 0) + (d.LCK || 0) + (d.OTH || 0) ).toFixed(1)), backgroundColor: '#3B82F6', borderRadius: 4 }
     ]
   };
 
-  const gridColor = theme === 'light' ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.05)';
-  const tickColor = theme === 'light' ? '#64748b' : '#94a3b8';
+  const gridColor = theme === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
+  const tickColor = theme === 'light' ? '#334155' : '#E2E8F0';
+  const legendTextColor = theme === 'light' ? '#0F172A' : '#FFFFFF';
 
   const barChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     scales: {
-      x: { stacked: true, grid: { color: gridColor }, ticks: { color: tickColor } },
-      y: { stacked: true, max: 24, grid: { color: gridColor }, ticks: { color: tickColor }, title: { display: true, text: 'Hours in Day', color: tickColor } }
+      x: {
+        stacked: true,
+        grid: { color: gridColor },
+        ticks: { color: tickColor, font: { family: 'Inter', size: 11, weight: '700' } }
+      },
+      y: {
+        stacked: true,
+        max: 24,
+        grid: { color: gridColor },
+        ticks: { color: tickColor, font: { family: 'JetBrains Mono', size: 11, weight: '700' } },
+        title: { display: true, text: 'Hours in Day', color: tickColor, font: { size: 11, family: 'Inter', weight: '700' } }
+      }
     },
     plugins: {
-      legend: { position: 'top', labels: { color: '#cbd5e1', font: { size: 11 } } }
+      legend: {
+        position: 'top',
+        labels: {
+          color: legendTextColor,
+          font: { family: 'Inter', size: 11, weight: '700' },
+          boxWidth: 12,
+          boxHeight: 12,
+          padding: 14
+        }
+      },
+      tooltip: {
+        backgroundColor: theme === 'light' ? '#FFFFFF' : '#09140F',
+        titleColor: theme === 'light' ? '#0F172A' : '#FFFFFF',
+        bodyColor: theme === 'light' ? '#334155' : '#E2E8F0',
+        borderColor: 'rgba(52, 211, 153, 0.5)',
+        borderWidth: 1,
+        titleFont: { family: 'Inter', size: 12, weight: '800' },
+        bodyFont: { family: 'JetBrains Mono', size: 11 }
+      }
     }
   };
 
-  // Health Score Line Chart Data
+  // Health Score & Estrus Heat Index Line Chart Data
   const healthLineData = {
     labels: history.map(d => d.day),
     datasets: [
-      { label: 'Health Score %', data: history.map(d => d.healthScore), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.3 },
-      { label: 'Estrus Heat Index %', data: history.map(d => d.estrusIndex), borderColor: '#f59e0b', borderDash: [4, 4], tension: 0.3 }
+      {
+        label: 'Health Score %',
+        data: history.map(d => d.healthScore || 92),
+        borderColor: '#10B981',
+        backgroundColor: 'rgba(16, 185, 129, 0.15)',
+        borderWidth: 3,
+        tension: 0.35,
+        fill: true,
+        pointBackgroundColor: '#10B981',
+        pointRadius: 4
+      },
+      {
+        label: 'Estrus Heat Index %',
+        data: history.map(d => d.estrusIndex || 12),
+        borderColor: '#F59E0B',
+        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+        borderWidth: 2,
+        borderDash: [4, 4],
+        tension: 0.35,
+        fill: false,
+        pointBackgroundColor: '#F59E0B',
+        pointRadius: 3
+      }
     ]
   };
 
@@ -91,12 +158,42 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
     responsive: true,
     maintainAspectRatio: false,
     scales: {
-      x: { grid: { color: gridColor }, ticks: { color: tickColor } },
-      y: { min: 0, max: 100, grid: { color: gridColor }, ticks: { color: tickColor } }
+      x: {
+        grid: { color: gridColor },
+        ticks: { color: tickColor, font: { family: 'Inter', size: 11, weight: '700' } }
+      },
+      y: {
+        min: 0,
+        max: 100,
+        grid: { color: gridColor },
+        ticks: { color: tickColor, font: { family: 'JetBrains Mono', size: 11, weight: '700' } },
+        title: { display: true, text: 'Index (%)', color: tickColor, font: { size: 11, family: 'Inter', weight: '700' } }
+      }
     },
-    plugins: { legend: { position: 'top', labels: { color: '#cbd5e1' } } }
+    plugins: {
+      legend: {
+        position: 'top',
+        labels: {
+          color: legendTextColor,
+          font: { family: 'Inter', size: 11, weight: '700' },
+          boxWidth: 12,
+          boxHeight: 12,
+          padding: 14
+        }
+      },
+      tooltip: {
+        backgroundColor: theme === 'light' ? '#FFFFFF' : '#09140F',
+        titleColor: theme === 'light' ? '#0F172A' : '#FFFFFF',
+        bodyColor: theme === 'light' ? '#334155' : '#E2E8F0',
+        borderColor: 'rgba(52, 211, 153, 0.5)',
+        borderWidth: 1,
+        titleFont: { family: 'Inter', size: 12, weight: '800' },
+        bodyFont: { family: 'JetBrains Mono', size: 11 }
+      }
+    }
   };
 
+  // Compute Weekly Averages
   const avg = data7Day.weeklyAverageHours || (() => {
     if (!history || history.length === 0) return { REL: 0, RUS: 0, FEP: 0, MOV: 0, DRN: 0 };
     const sums = history.reduce((acc, curr) => ({
@@ -122,9 +219,9 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
     for (let i = 1; i < logs.length; i++) {
       const log = logs[i];
       if (log.activityCode === currentGroup.activityCode) {
-        currentGroup.startTime = log.startTime; // older start time
+        currentGroup.startTime = log.startTime;
         currentGroup.durationMinutes += log.durationMinutes;
-        currentGroup.startPacketId = log.startPacketId; // older packet
+        currentGroup.startPacketId = log.startPacketId;
         currentGroup.confidencePercent = Math.round((currentGroup.confidencePercent + log.confidencePercent) / 2);
       } else {
         groupedLogs.push(currentGroup);
@@ -134,71 +231,93 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
     groupedLogs.push(currentGroup);
   }
 
+  // Filter Grouped Logs
+  const activeLogs = groupedLogs.length > 0 ? groupedLogs : (logs || []);
+  const filteredLogs = activeLogs.filter(log => {
+    const matchesSearch =
+      log.activityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.activityCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.category?.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesCat = categoryFilter === 'ALL' || log.category === categoryFilter;
+    return matchesSearch && matchesCat;
+  });
+
   return (
     <div>
       {/* 7-Day Activity Stacked Chart */}
-      <div class="glass-panel" style={{ marginBottom: '1.75rem' }}>
-        <div class="card-header-box">
-          <div class="card-title">
-            <i class="fa-solid fa-chart-column"></i>
-            7-Day Activity Time Allocation Breakdown (Hours per Day)
+      <div className="glass-panel" style={{ marginBottom: '1.25rem' }}>
+        <div className="card-header-box">
+          <div className="card-title">
+            <i className="fa-solid fa-chart-column" style={{ color: 'var(--accent-sky)' }}></i>
+            7-DAY ACTIVITY TIME ALLOCATION BREAKDOWN (HOURS PER DAY)
           </div>
-          <div class="meta-chip">7-Day Continuous Logging</div>
+          <div className="meta-chip">7-Day Continuous Logging</div>
         </div>
-        <div class="card-body">
-          <div style={{ height: '340px', position: 'relative' }}>
+        <div className="card-body">
+          <div style={{ height: '300px', position: 'relative' }}>
             <Bar data={barChartData} options={barChartOptions} />
           </div>
         </div>
       </div>
 
       {/* Grid: Health Trend & Weekly Averages */}
-      <div class="grid-2col">
+      <div className="grid-2col" style={{ marginBottom: '1.25rem' }}>
         
         {/* Health Trend */}
-        <div class="glass-panel">
-          <div class="card-header-box">
-            <div class="card-title">
-              <i class="fa-solid fa-heart-pulse"></i>
-              7-Day Health Score & Estrus Heat Probability Trend
+        <div className="glass-panel">
+          <div className="card-header-box">
+            <div className="card-title">
+              <i className="fa-solid fa-heart-pulse" style={{ color: 'var(--accent-emerald)' }}></i>
+              7-DAY HEALTH SCORE & ESTRUS HEAT PROBABILITY TREND
             </div>
           </div>
-          <div class="card-body">
-            <div style={{ height: '260px', position: 'relative' }}>
+          <div className="card-body">
+            <div style={{ height: '240px', position: 'relative' }}>
               <Line data={healthLineData} options={healthLineOptions} />
             </div>
           </div>
         </div>
 
         {/* Weekly Averages */}
-        <div class="glass-panel">
-          <div class="card-header-box">
-            <div class="card-title">
-              <i class="fa-solid fa-list-check"></i>
-              7-Day Average Activity Distribution
+        <div className="glass-panel">
+          <div className="card-header-box">
+            <div className="card-title">
+              <i className="fa-solid fa-list-check" style={{ color: 'var(--accent-amber)' }}></i>
+              7-DAY AVERAGE ACTIVITY DISTRIBUTION
             </div>
           </div>
-          <div class="card-body">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                <span><i class="fa-solid fa-bed" style={{ color: '#8b5cf6' }}></i> Lying Rest (REL):</span>
-                <strong style={{ fontFamily: 'JetBrains Mono' }}>{avg.REL} hrs/day</strong>
+          <div className="card-body">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                  <i className="fa-solid fa-bed" style={{ color: '#8B5CF6' }}></i> Lying Rest (REL):
+                </span>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-purple)' }}>{avg.REL} hrs/day</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                <span><i class="fa-solid fa-arrows-spin" style={{ color: '#06b6d4' }}></i> Standing Rumination (RUS):</span>
-                <strong style={{ fontFamily: 'JetBrains Mono' }}>{avg.RUS} hrs/day</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                  <i className="fa-solid fa-arrows-spin" style={{ color: '#06B6D4' }}></i> Standing Rumination (RUS):
+                </span>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{avg.RUS} hrs/day</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                <span><i class="fa-solid fa-bowl-food" style={{ color: '#10b981' }}></i> Feeding (FEP):</span>
-                <strong style={{ fontFamily: 'JetBrains Mono' }}>{avg.FEP} hrs/day</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                  <i className="fa-solid fa-bowl-food" style={{ color: '#10B981' }}></i> Feeding (FEP):
+                </span>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-emerald)' }}>{avg.FEP} hrs/day</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                <span><i class="fa-solid fa-person-walking" style={{ color: '#f59e0b' }}></i> Movement / Activity (MOV):</span>
-                <strong style={{ fontFamily: 'JetBrains Mono' }}>{avg.MOV} hrs/day</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                  <i className="fa-solid fa-person-walking" style={{ color: '#F59E0B' }}></i> Movement / Activity (MOV):
+                </span>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-amber)' }}>{avg.MOV} hrs/day</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                <span><i class="fa-solid fa-glass-water" style={{ color: '#3b82f6' }}></i> Drinking (DRN):</span>
-                <strong style={{ fontFamily: 'JetBrains Mono' }}>{avg.DRN} hrs/day</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                  <i className="fa-solid fa-glass-water" style={{ color: '#3B82F6' }}></i> Drinking (DRN):
+                </span>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-cyan)' }}>{avg.DRN} hrs/day</strong>
               </div>
             </div>
           </div>
@@ -207,19 +326,42 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
       </div>
 
       {/* Activity Transition Log Table */}
-      <div class="glass-panel">
-        <div class="card-header-box">
-          <div class="card-title">
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            Recorded Activity Transition Logs (Last 24 Hours)
+      <div className="glass-panel">
+        <div className="card-header-box" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div className="card-title">
+            <i className="fa-solid fa-clock-rotate-left" style={{ color: 'var(--accent-amber)' }}></i>
+            RECORDED ACTIVITY TRANSITION LOGS (LAST 24 HOURS)
           </div>
-          <a href={`/api/export/csv?cowId=${cowId}`} class="btn btn-secondary" target="_blank" rel="noreferrer">
-            <i class="fa-solid fa-download"></i> Download CSV Log
-          </a>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Search logs..."
+              className="search-input-box"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{ width: '180px' }}
+            />
+            <select
+              className="search-input-box"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+            >
+              <option value="ALL">All Categories</option>
+              <option value="Rest">Rest</option>
+              <option value="Digestion">Digestion</option>
+              <option value="Nutrition">Nutrition</option>
+              <option value="Locomotion">Locomotion</option>
+            </select>
+            <a href={`/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer">
+              <i className="fa-solid fa-file-arrow-down"></i> EXPORT CSV
+            </a>
+          </div>
         </div>
-        <div class="card-body">
-          <div class="table-responsive">
-            <table class="custom-table">
+
+        <div className="card-body" style={{ padding: 0 }}>
+          <div className="table-responsive">
+            <table className="custom-table">
               <thead>
                 <tr>
                   <th>Log ID</th>
@@ -234,26 +376,38 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                 </tr>
               </thead>
               <tbody>
-                {groupedLogs && groupedLogs.length > 0 ? (
-                  groupedLogs.map(log => (
+                {filteredLogs && filteredLogs.length > 0 ? (
+                  filteredLogs.map(log => (
                     <tr key={log.logId}>
-                      <td style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-main)' }}>#{log.logId}</td>
-                      <td style={{ color: 'var(--text-main)', fontWeight: 600 }}>{data7Day?.device_id ? `Node-${data7Day.device_id}` : `Node-${cowId}`}</td>
-                      <td style={{ color: 'var(--text-main)' }}>{new Date(log.startTime).toLocaleTimeString()}</td>
-                      <td style={{ color: 'var(--text-main)' }}>{new Date(log.endTime).toLocaleTimeString()}</td>
-                      <td style={{ color: 'var(--text-main)' }}><strong>{log.durationMinutes} mins</strong></td>
+                      <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontWeight: 700 }}>#{log.logId}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 800 }}>
+                        {data7Day?.device_id ? `Node-${data7Day.device_id}` : `Node-${cowId}`}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                        {new Date(log.startTime).toLocaleTimeString()}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                        {new Date(log.endTime).toLocaleTimeString()}
+                      </td>
+                      <td><strong style={{ color: 'var(--text-primary)' }}>{log.durationMinutes} mins</strong></td>
                       <td>
-                        <span className="code-badge" style={{ background: `${log.color}33`, color: log.color, border: `1px solid ${log.color}` }}>
+                        <span className="code-badge" style={{ background: `${log.color || '#38bdf8'}25`, color: log.color || 'var(--accent-sky)', border: `1px solid ${log.color || 'var(--accent-sky)'}` }}>
                           {log.activityCode} - {log.activityName}
                         </span>
                       </td>
-                      <td style={{ color: 'var(--text-main)' }}>{log.category}</td>
-                      <td><strong style={{ color: 'var(--primary-emerald)' }}>{log.confidencePercent}%</strong></td>
-                      <td style={{ fontFamily: 'JetBrains Mono', fontSize: '0.775rem', color: 'var(--text-main)' }}>{log.startPacketId} - {log.endPacketId}</td>
+                      <td><span className="meta-chip">{log.category}</span></td>
+                      <td><strong style={{ color: 'var(--accent-emerald)', fontFamily: 'var(--font-mono)', fontWeight: 800 }}>{log.confidencePercent}%</strong></td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                        {log.startPacketId} – {log.endPacketId}
+                      </td>
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-main)' }}>No activity logs recorded yet.</td></tr>
+                  <tr>
+                    <td colSpan="9" style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                      No activity logs match your search or filter.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

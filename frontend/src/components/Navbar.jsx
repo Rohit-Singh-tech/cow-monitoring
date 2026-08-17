@@ -2,157 +2,179 @@ import React, { useState, useRef, useEffect } from 'react';
 
 export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump, onToggleMenu, isSidebarOpen, theme, onToggleTheme }) {
   const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef(null);
 
+  // Close popup on Escape key
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
         setShowDropdown(false);
       }
     }
     if (showDropdown) {
-      document.addEventListener("mousedown", handleClickOutside);
+      window.addEventListener('keydown', handleKeyDown);
     }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showDropdown]);
 
   const alertingCows = cows.filter(c => c.health_risk_decision === 'HIGH_RISK' || c.healthStatus === 'ESTRUS_ALERT');
   const alertCount = alertingCows.length;
 
   return (
-    <header className="navbar">
-      <div className="brand-section" style={{ gap: '1rem' }}>
-        {!isSidebarOpen && (
-          <i className="fa-solid fa-bars" onClick={onToggleMenu} style={{ color: 'var(--text-main)', fontSize: '1.25rem', cursor: 'pointer' }}></i>
-        )}
-        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0, letterSpacing: '0.05em', color: 'var(--text-main)' }}>
-          SYSTEM OVERVIEW
-        </h2>
-      </div>
-
-      <div className="header-controls">
-        <div className="cow-select-wrapper">
-          <i className="fa-solid fa-satellite-dish" style={{ color: 'var(--primary-emerald)' }}></i>
-          <span className="cow-select-label">TARGET NODE:</span>
-          <select
-            className="cow-select"
-            value={currentCowId}
-            onChange={(e) => onSelectCow(e.target.value)}
-          >
-            {cows.map((c) => (
-              <option key={c.id} value={c.id}>
-                NODE #{c.device_id} - {c.name} [{(c.health_risk_decision || 'HEALTHY').replace('_', ' ')}]
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="status-pill online" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.5)', padding: '0.4rem 1rem' }}>
-          <span className="pulse-dot"></span>
-          UPLINK ACTIVE
-        </div>
-
-        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 500 }}>
-          {new Date().toLocaleTimeString('en-US', { hour12: false })}
-        </div>
-
-        {/* Theme Toggle Button */}
-        {/* Theme Toggle Button */}
-        <button 
-          onClick={onToggleTheme} 
-          style={{ 
-            background: theme === 'light' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255,255,255,0.05)', 
-            border: `1px solid ${theme === 'light' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.1)'}`, 
-            color: theme === 'light' ? 'var(--primary-cyan)' : 'var(--text-main)', 
-            cursor: 'pointer', 
-            fontSize: '0.9rem',
-            outline: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '34px',
-            height: '34px',
-            borderRadius: '50%',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-            transition: 'all 0.3s ease',
-            flexShrink: 0
-          }}
-          title="Toggle Theme"
-        >
-          <i className={theme === 'light' ? "fa-solid fa-moon" : "fa-solid fa-sun"}></i>
-        </button>
-
-        <div style={{ position: 'relative' }} ref={dropdownRef}>
+    <>
+      <header className="navbar">
+        <div className="navbar-brand-area">
           <button
-            className="status-pill"
-            style={{
-              background: alertCount > 0 ? 'rgba(255,0,60,0.15)' : 'rgba(16,185,129,0.1)',
-              color: alertCount > 0 ? 'var(--danger-rose)' : 'var(--primary-emerald)',
-              border: `1px solid ${alertCount > 0 ? 'rgba(255,0,60,0.5)' : 'rgba(16,185,129,0.5)'}`,
-              padding: '0.4rem 1rem',
-              boxShadow: alertCount > 0 ? '0 0 10px rgba(255,0,60,0.3)' : 'none',
-              cursor: alertCount > 0 ? 'pointer' : 'default',
-              outline: 'none'
-            }}
-            onClick={() => { if (alertCount > 0) setShowDropdown(!showDropdown); }}
+            onClick={onToggleMenu}
+            className="navbar-toggle-btn"
+            title="Toggle Navigation Menu"
           >
-            {alertCount} CRITICAL ALERT{alertCount !== 1 ? 'S' : ''}
+            <i className="fa-solid fa-bars-staggered"></i>
+          </button>
+          <h2 className="navbar-title">
+            SYSTEM OVERVIEW
+          </h2>
+        </div>
+
+        <div className="header-controls">
+          {/* Node Selector */}
+          <div className="cow-select-wrapper">
+            <i className="fa-solid fa-microchip" style={{ color: 'var(--accent-emerald)', fontSize: '0.8rem' }}></i>
+            <span className="cow-select-label">TARGET NODE:</span>
+            <select
+              className="cow-select"
+              value={currentCowId}
+              onChange={(e) => onSelectCow(e.target.value)}
+            >
+              {cows.map((c) => (
+                <option key={c.id} value={c.id}>
+                  NODE #{c.device_id} - {c.name} [{(c.health_risk_decision || 'HEALTHY').replace('_', ' ')}]
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Live Uplink Status */}
+          <div className="status-pill online">
+            <span className="pulse-dot"></span>
+            CONNECTED
+          </div>
+
+          {/* Live Monospace Clock */}
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '0 0.15rem' }}>
+            {new Date().toLocaleTimeString('en-US', { hour12: false })}
+          </div>
+
+          {/* Theme Toggle */}
+          <button
+            onClick={onToggleTheme}
+            className="navbar-icon-btn"
+            title="Toggle Dark / Light Theme"
+          >
+            <i className={theme === 'light' ? "fa-solid fa-moon" : "fa-solid fa-sun"} style={{ color: theme === 'light' ? '#7C3AED' : '#FBBF24' }}></i>
           </button>
 
-          {showDropdown && alertCount > 0 && (
-            <div className="glass-panel" style={{
-              position: 'absolute',
-              top: '130%',
-              right: 0,
-              width: '320px',
-              maxHeight: '60vh',
-              overflowY: 'auto',
-              zIndex: 200,
-              padding: '1.25rem',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem',
-              border: '1px solid var(--danger-rose)',
-              boxShadow: '0 0 25px rgba(255,0,60,0.4)',
-              background: 'var(--bg-main)'
-            }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--danger-rose)', borderBottom: '1px solid rgba(255,0,60,0.3)', paddingBottom: '0.5rem', marginBottom: '0.25rem', position: 'sticky', top: 0, background: 'var(--bg-main)', zIndex: 1 }}>
-                <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: '0.5rem' }}></i> ACTIVE ALERTS LOG
-              </div>
-              {alertingCows.map(c => (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                  <i className="fa-solid fa-triangle-exclamation" style={{ color: 'var(--danger-rose)' }}></i>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', letterSpacing: '0.05em' }}>
-                    NODE #{c.device_id} - {c.name}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    <span style={{ color: 'var(--danger-rose)' }}>[DETECTED]</span> {(c.health_risk_decision || 'HIGH_RISK').replace('_', ' ')}
-                  </div>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ padding: '0.35rem 0.5rem', fontSize: '0.7rem', marginTop: '0.25rem', width: '100%', justifyContent: 'center' }}
-                    onClick={() => { onSelectCow(c.id); setShowDropdown(false); }}
-                  >
-                    <i className="fa-solid fa-crosshairs"></i> FOCUS ON NODE
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          {/* Alerts Trigger Button */}
+          <button
+            className={`status-pill ${alertCount > 0 ? 'critical' : 'online'}`}
+            style={{ cursor: alertCount > 0 ? 'pointer' : 'default', outline: 'none' }}
+            onClick={() => { if (alertCount > 0) setShowDropdown(!showDropdown); }}
+            title={alertCount > 0 ? "Click to view active health alerts" : "All herd members healthy"}
+          >
+            <i className={alertCount > 0 ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-circle-check"}></i>
+            {alertCount > 0 ? `${alertCount} ALERT${alertCount !== 1 ? 'S' : ''}` : 'ALL HEALTHY'}
+          </button>
 
-        <a
-          href={`/api/export/csv?cowId=${currentCowId}`}
-          className="btn btn-secondary"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <i className="fa-solid fa-download"></i>
-          DUMP LOGS
-        </a>
-      </div>
-    </header>
+          {/* DUMP LOGS CSV Button */}
+          <a
+            href={`/api/export/csv?cowId=${currentCowId}`}
+            className="btn btn-secondary"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <i className="fa-solid fa-file-arrow-down"></i>
+            DUMP LOGS
+          </a>
+        </div>
+      </header>
+
+      {/* Floating Modal / Popover for Alerts (Rendered outside navbar overflow) */}
+      {showDropdown && alertCount > 0 && (
+        <div className="alerts-popover-backdrop" onClick={() => setShowDropdown(false)}>
+          <div 
+            className="alerts-popover-card" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="alerts-popover-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="pulse-dot" style={{ color: '#EF4444' }}></span>
+                <i className="fa-solid fa-triangle-exclamation" style={{ color: '#EF4444', fontSize: '1rem' }}></i>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>
+                  ACTIVE HERD HEALTH ALERTS ({alertCount})
+                </h3>
+              </div>
+              <button 
+                className="alerts-close-btn"
+                onClick={() => setShowDropdown(false)}
+                title="Close Alerts"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="alerts-popover-body">
+              {alertingCows.map(c => {
+                const isSelected = String(c.id) === String(currentCowId);
+                return (
+                  <div key={c.id} className={`alert-item-card ${isSelected ? 'selected' : ''}`}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <div className="alert-item-avatar">
+                          <i className="fa-solid fa-cow" style={{ color: '#EF4444', fontSize: '1.1rem' }}></i>
+                        </div>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                            {c.name} <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>({c.tagNumber || `TAG-${c.device_id}`})</span>
+                          </h4>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.2rem' }}>
+                            <span className="meta-chip" style={{ fontSize: '0.675rem', padding: '0.15rem 0.45rem' }}>
+                              Node #{c.device_id}
+                            </span>
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                              {c.breed || 'Gir / Sahiwal'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <span className="health-badge HIGH_RISK" style={{ fontSize: '0.65rem', padding: '0.2rem 0.55rem' }}>
+                        {(c.health_risk_decision || 'HIGH_RISK').replace('_', ' ')}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.65rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
+                      <div style={{ fontSize: '0.725rem', color: '#FFA4A4', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                        <i className="fa-solid fa-temperature-arrow-up" style={{ marginRight: '0.3rem' }}></i>
+                        Estrus: {c.estrusProbability || 91}% | Rum: {c.ruminationHoursToday || 0} hrs
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        style={{ height: '28px', padding: '0 0.75rem', fontSize: '0.725rem' }}
+                        onClick={() => {
+                          onSelectCow(c.id);
+                          setShowDropdown(false);
+                        }}
+                      >
+                        <i className="fa-solid fa-crosshairs"></i>
+                        {isSelected ? 'CURRENTLY VIEWING' : 'FOCUS NODE'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
