@@ -274,8 +274,8 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
                 "heat_probability": inference.heat_probability or 0.0,
                 "alert_level": heat_alert
             },
-            "anomaly_detection": {"is_anomaly": False, "score": 0.0},
-            "deviation_metrics": {"score": 0.0, "is_deviating": False, "threshold": 1.5},
+            "anomaly_detection": {"is_anomaly": False, "score": getattr(inference, "anomaly_score", 0.0)},
+            "deviation_metrics": {"score": 0.0, "is_deviating": False, "threshold": getattr(inference, "anomaly_threshold", 0.0)},
             "health_risk_decision": inference.health_risk_decision or "HEALTHY",
             "features_extracted_count": 67
         }
