@@ -44,7 +44,7 @@ class DataloggerPoint(Base):
     __tablename__ = "datalogger_points"
 
     id = Column(Integer, primary_key=True, index=True)
-    header_id = Column(Integer, ForeignKey("datalogger_headers.id", ondelete="CASCADE"), nullable=False)
+    header_id = Column(Integer, ForeignKey("datalogger_headers.id", ondelete="CASCADE"), nullable=False, index=True)
     point_index = Column(Integer, nullable=False)
     x = Column(Integer, nullable=True)
     y = Column(Integer, nullable=True)
