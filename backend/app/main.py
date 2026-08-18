@@ -225,9 +225,26 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     if current_group:
         grouped_logs.append(current_group)
         
-    # Calculate durations and averages
-    for g in grouped_logs:
-        g["durationMinutes"] = max(1, round((g["packetCount"] * 8) / 60))
+    # Calculate durations and reconstruct timeline backward to prevent gaps/overlaps
+    current_end_time = None
+    
+    for g in reversed(grouped_logs):
+        duration_mins = max(1, round((g["packetCount"] * 8) / 60))
+        g["durationMinutes"] = duration_mins
+        
+        if current_end_time is None:
+            if g["endTime"]:
+                current_end_time = datetime.fromisoformat(g["endTime"])
+            else:
+                current_end_time = datetime.now(timezone.utc)
+                
+        g["endTime"] = current_end_time.isoformat()
+        
+        start_time = current_end_time - timedelta(minutes=duration_mins)
+        g["startTime"] = start_time.isoformat()
+        
+        current_end_time = start_time
+        
         g["confidencePercent"] = round(g["confidenceSum"] / g["packetCount"])
         del g["packetCount"]
         del g["confidenceSum"]
