@@ -170,10 +170,11 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     from datetime import datetime, timedelta, timezone
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     
+    # Get ALL headers for the last 24 hours, ordered ASCENDING to group them correctly
     headers = db.query(DataloggerHeader).filter(
         DataloggerHeader.device_id == str(dev_id),
         DataloggerHeader.timestamp >= cutoff
-    ).order_by(DataloggerHeader.timestamp.desc()).offset((page - 1) * limit).limit(limit).all()
+    ).order_by(DataloggerHeader.timestamp.asc()).all()
     
     if not headers:
         return {"success": True, "logs": [], "page": page, "limit": limit}
@@ -189,31 +190,55 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     configs = db.query(ActivityConfig).all()
     ACTIVITY_CFG = {cfg.code: {"name": cfg.name, "color": cfg.color, "category": cfg.category} for cfg in configs}
     
-    logs = []
+    grouped_logs = []
+    current_group = None
+
     for h in headers:
         inf = inf_by_header.get(h.id)
-        if inf:
-            act_code = inf.activity_code
-            conf = inf.confidence or 85
-        else:
-            act_code = "RES"
-            conf = 80
-            
-        act_info = ACTIVITY_CFG.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
+        act_code = inf.activity_code if inf else "RES"
+        conf = inf.confidence if (inf and inf.confidence) else 85
         
-        logs.append({
-            "logId": h.id,
-            "startTime": h.timestamp.isoformat() if h.timestamp else "",
-            "endTime": h.timestamp.isoformat() if h.timestamp else "",
-            "durationMinutes": 1,
-            "activityCode": act_code,
-            "activityName": act_info["name"],
-            "color": act_info["color"],
-            "category": act_info["category"],
-            "confidencePercent": conf,
-            "startPacketId": f"P-{h.packet_id_num}",
-            "endPacketId": f"P-{h.packet_id_num}"
-        })
+        if current_group and current_group["activityCode"] == act_code:
+            current_group["endTime"] = h.timestamp.isoformat() if h.timestamp else current_group["endTime"]
+            current_group["packetCount"] += 1
+            current_group["endPacketId"] = f"P-{h.packet_id_num}"
+            current_group["confidenceSum"] += conf
+        else:
+            if current_group:
+                grouped_logs.append(current_group)
+                
+            act_info = ACTIVITY_CFG.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
+            current_group = {
+                "logId": h.id,
+                "startTime": h.timestamp.isoformat() if h.timestamp else "",
+                "endTime": h.timestamp.isoformat() if h.timestamp else "",
+                "packetCount": 1,
+                "activityCode": act_code,
+                "activityName": act_info["name"],
+                "color": act_info["color"],
+                "category": act_info["category"],
+                "confidenceSum": conf,
+                "startPacketId": f"P-{h.packet_id_num}",
+                "endPacketId": f"P-{h.packet_id_num}"
+            }
+            
+    if current_group:
+        grouped_logs.append(current_group)
+        
+    # Calculate durations and averages
+    for g in grouped_logs:
+        g["durationMinutes"] = max(1, round((g["packetCount"] * 8) / 60))
+        g["confidencePercent"] = round(g["confidenceSum"] / g["packetCount"])
+        del g["packetCount"]
+        del g["confidenceSum"]
+        
+    # Reverse to show newest transitions first, then paginate
+    grouped_logs.reverse()
+    
+    start_idx = (page - 1) * limit
+    paged_logs = grouped_logs[start_idx : start_idx + limit]
+    
+    logs = paged_logs
         
     return {
         "success": True,

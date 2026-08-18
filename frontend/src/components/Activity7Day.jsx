@@ -215,27 +215,9 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
     };
   })();
 
-  // Group consecutive logs with the same activityCode
-  const groupedLogs = [];
-  if (logs && logs.length > 0) {
-    let currentGroup = { ...logs[0] };
-    for (let i = 1; i < logs.length; i++) {
-      const log = logs[i];
-      if (log.activityCode === currentGroup.activityCode) {
-        currentGroup.startTime = log.startTime;
-        currentGroup.durationMinutes += log.durationMinutes;
-        currentGroup.startPacketId = log.startPacketId;
-        currentGroup.confidencePercent = Math.round((currentGroup.confidencePercent + log.confidencePercent) / 2);
-      } else {
-        groupedLogs.push(currentGroup);
-        currentGroup = { ...log };
-      }
-    }
-    groupedLogs.push(currentGroup);
-  }
+  // Filter Logs (now pre-grouped by backend)
+  const activeLogs = logs || [];
 
-  // Filter Grouped Logs
-  const activeLogs = groupedLogs.length > 0 ? groupedLogs : (logs || []);
   const filteredLogs = activeLogs.filter(log => {
     const matchesSearch =
       log.activityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
