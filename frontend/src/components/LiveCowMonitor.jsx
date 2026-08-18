@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatHours } from '../utils';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -312,7 +313,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
           </div>
           <div>
             <div className="metric-value">
-              {health.ruminationHoursToday || 0} <span className="metric-unit">hrs</span>
+              {formatHours(health.ruminationHoursToday)}
             </div>
             <div className="metric-title">RUMINATION TOTAL</div>
             <div className="metric-footer">Target: 8-10 hrs</div>
@@ -331,7 +332,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
           </div>
           <div>
             <div className="metric-value">
-              {health.lyingHoursToday || 0} <span className="metric-unit">hrs</span>
+              {formatHours(health.lyingHoursToday)}
             </div>
             <div className="metric-title">LYING REST HOURS</div>
             <div className="metric-footer">Comfort Index</div>

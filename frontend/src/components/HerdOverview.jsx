@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useConfig } from '../context/ConfigContext';
+import { formatHours } from '../utils';
 
 export default function HerdOverview({ cows, onSelectCow }) {
   const { activities } = useConfig();
@@ -120,13 +121,13 @@ export default function HerdOverview({ cows, onSelectCow }) {
                     <div>
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>Rumination</div>
                       <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--accent-sky)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
-                        {cow.ruminationHoursToday} <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-muted)' }}>hrs</span>
+                        {formatHours(cow.ruminationHoursToday)}
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>Lying Rest</div>
                       <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--accent-purple)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
-                        {cow.lyingHoursToday} <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-muted)' }}>hrs</span>
+                        {formatHours(cow.lyingHoursToday)}
                       </div>
                     </div>
                     <div>

@@ -12,6 +12,7 @@ import {
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import { useConfig } from '../context/ConfigContext';
+import { formatHours } from '../utils';
 
 ChartJS.register(
   CategoryScale,
@@ -295,31 +296,31 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-bed" style={{ color: '#8B5CF6' }}></i> Lying Rest (REL):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-purple)' }}>{avg.REL} hrs/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-purple)' }}>{formatHours(avg.REL)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-arrows-spin" style={{ color: '#06B6D4' }}></i> Standing Rumination (RUS):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{avg.RUS} hrs/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{formatHours(avg.RUS)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-bowl-food" style={{ color: '#10B981' }}></i> Feeding (FEP):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-emerald)' }}>{avg.FEP} hrs/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-emerald)' }}>{formatHours(avg.FEP)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-person-walking" style={{ color: '#F59E0B' }}></i> Movement / Activity (MOV):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-amber)' }}>{avg.MOV} hrs/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-amber)' }}>{formatHours(avg.MOV)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-glass-water" style={{ color: '#3B82F6' }}></i> Drinking (DRN):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-cyan)' }}>{avg.DRN} hrs/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-cyan)' }}>{formatHours(avg.DRN)}/day</strong>
               </div>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { formatHours } from '../utils';
 
 export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump, onToggleMenu, isSidebarOpen, theme, onToggleTheme }) {
   const [showDropdown, setShowDropdown] = useState(false);
@@ -154,7 +155,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.65rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
                       <div style={{ fontSize: '0.725rem', color: '#FFA4A4', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
                         <i className="fa-solid fa-temperature-arrow-up" style={{ marginRight: '0.3rem' }}></i>
-                        Estrus: {c.estrusProbability || 91}% | Rum: {c.ruminationHoursToday || 0} hrs
+                        Estrus: {c.estrusProbability || 91}% | Rum: {formatHours(c.ruminationHoursToday)}
                       </div>
                       <button
                         className="btn btn-primary"
