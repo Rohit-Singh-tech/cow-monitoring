@@ -215,7 +215,9 @@ export default function App() {
         if (isSubscribed) scheduleNext();
       }, getInterval());
     };
-    scheduleNext();
+    fetchLive().then(() => {
+      if (isSubscribed) scheduleNext();
+    });
 
     return () => {
       isSubscribed = false;
@@ -226,6 +228,9 @@ export default function App() {
   const handleSelectCow = (id) => {
     setCurrentCowId(id);
     setAccelBuffer({ x: [], y: [], z: [], mag: [], labels: [] });
+    setCurrentData(null);
+    setData7Day(null);
+    setLogs([]);
     liveErrorCountRef.current = 0; // Reset error backoff on cow switch
   };
 
