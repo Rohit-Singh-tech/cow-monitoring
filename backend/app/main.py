@@ -167,8 +167,12 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     dev_id = cow.device_id if cow else str(cow_id)
     
     # Get paginated headers with their pre-computed ML inferences in ONE query
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    
     headers = db.query(DataloggerHeader).filter(
-        DataloggerHeader.device_id == str(dev_id)
+        DataloggerHeader.device_id == str(dev_id),
+        DataloggerHeader.timestamp >= cutoff
     ).order_by(DataloggerHeader.timestamp.desc()).offset((page - 1) * limit).limit(limit).all()
     
     if not headers:

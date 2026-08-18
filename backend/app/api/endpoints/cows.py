@@ -441,10 +441,39 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         
     dev_id = cow.device_id if cow else str(cow_id)
 
+    # Calculate last 7 dates
+    today = datetime.now(timezone.utc).date()
+    date_range = [(today - timedelta(days=i)) for i in range(6, -1, -1)]
+
     # Get last 7 days of pre-computed summaries
     summaries = db.query(DailyCowSummary).filter(
-        DailyCowSummary.device_id == str(dev_id)
-    ).order_by(DailyCowSummary.date.desc()).limit(7).all()
+        DailyCowSummary.device_id == str(dev_id),
+        DailyCowSummary.date >= date_range[0]
+    ).all()
+    
+    summary_by_date = {s.date: s for s in summaries}
+
+    # Fetch fallback SQL stats for missing dates
+    missing_dates = [d for d in date_range if d not in summary_by_date]
+    sql_fallback_by_date = {}
+    if missing_dates:
+        sql = text("""
+            SELECT DATE(timestamp) as day_date, COUNT(*) as pkt_count
+            FROM datalogger_headers
+            WHERE device_id = :dev AND DATE(timestamp) >= :start_date
+            GROUP BY DATE(timestamp)
+        """)
+        rows = db.execute(sql, {"dev": str(dev_id), "start_date": date_range[0].isoformat()}).fetchall()
+        for r in rows:
+            day_str = r[0]
+            if isinstance(day_str, str):
+                try:
+                    d = datetime.strptime(day_str, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+            else:
+                d = day_str
+            sql_fallback_by_date[d] = r[1]
 
     days = []
     dates = []
@@ -456,56 +485,32 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     health_score_list = []
     estrus_index_list = []
 
-    if summaries:
-        for s in reversed(summaries):
-            days.append(s.date.strftime("%a"))
-            dates.append(s.date.strftime("%Y-%m-%d"))
+    for d in date_range:
+        days.append(d.strftime("%a"))
+        dates.append(d.strftime("%Y-%m-%d"))
+        
+        s = summary_by_date.get(d)
+        if s:
             rum_list.append(round(s.rumination_hours, 1))
             lying_list.append(round(s.lying_hours, 1))
             feed_list.append(round(s.feeding_hours, 1))
             act_list.append(round(s.moving_hours, 1))
             monitored_list.append(round(s.monitored_hours, 1))
             
-            # Data-driven Health Score based on rumination targets (8 hours is ideal)
             health_score = min(100, int((s.rumination_hours / 8.0) * 100)) if s.rumination_hours > 0 else 0
             if s.monitored_hours > 0 and s.rumination_hours == 0 and s.lying_hours == 0:
                 health_score = 0
             elif s.monitored_hours == 0:
                 health_score = 0
-            # Ensure a minimum score if they have any normal activity
             elif health_score == 0 and (s.lying_hours > 0 or s.feeding_hours > 0):
                 health_score = 50
             health_score_list.append(health_score)
             
-            # Data-driven Estrus Index based on percentage of packets flagged as heat
             e_index = int((s.heat_count / s.total_packets) * 100) if s.total_packets > 0 else 0
             estrus_index_list.append(min(100, e_index))
-    else:
-        # Fallback: compute from packet counts if no summaries exist yet
-        sql = text("""
-            SELECT DATE(timestamp) as day_date, COUNT(*) as pkt_count
-            FROM datalogger_headers
-            WHERE device_id = :dev
-            GROUP BY DATE(timestamp)
-            ORDER BY day_date DESC
-            LIMIT 7
-        """)
-        rows = db.execute(sql, {"dev": str(dev_id)}).fetchall()
-        
-        for r in reversed(rows):
-            if isinstance(r[0], str):
-                try:
-                    d = datetime.strptime(r[0], "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-            else:
-                d = r[0]
-                
-            days.append(d.strftime("%a"))
-            dates.append(d.strftime("%Y-%m-%d"))
-            pkt_count = r[1]
+        else:
+            pkt_count = sql_fallback_by_date.get(d, 0)
             day_hours = round((pkt_count * 8.0) / 3600.0, 1)
-            # No ML data available yet — show 0 for all activities but show monitored hours
             rum_list.append(0.0)
             lying_list.append(0.0)
             feed_list.append(0.0)
