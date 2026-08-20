@@ -119,7 +119,7 @@ def update_daily_summaries(db, target_date=None):
                     COUNT(*) as total_packets,
                     COUNT(m.id) as classified_packets,
                     COALESCE(SUM(CASE WHEN m.activity_code IN ('RUS') THEN 1 ELSE 0 END), 0) as rum_count,
-                    COALESCE(SUM(CASE WHEN m.activity_code IN ('REL') THEN 1 ELSE 0 END), 0) as lying_count,
+                    COALESCE(SUM(CASE WHEN m.activity_code IN ('REL', 'RES') THEN 1 ELSE 0 END), 0) as lying_count,
                     COALESCE(SUM(CASE WHEN m.activity_code IN ('FEP', 'FED', 'GRZ', 'FES') THEN 1 ELSE 0 END), 0) as feed_count,
                     COALESCE(SUM(CASE WHEN m.activity_code IN ('MOV', 'ATT') THEN 1 ELSE 0 END), 0) as move_count,
                     COALESCE(SUM(CASE WHEN m.is_heat = TRUE THEN 1 ELSE 0 END), 0) as heat_count

@@ -229,7 +229,14 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     current_end_time = None
     
     for g in reversed(grouped_logs):
-        duration_mins = max(1, round((g["packetCount"] * 8) / 60))
+        duration_secs = g["packetCount"] * 8
+        if duration_secs < 60:
+            g["durationDisplay"] = f"{duration_secs} secs"
+        else:
+            g["durationDisplay"] = f"{round(duration_secs / 60)} mins"
+        
+        # We need to keep a numerical value for time calculations below
+        duration_mins = max(1, round(duration_secs / 60))
         g["durationMinutes"] = duration_mins
         
         if current_end_time is None:

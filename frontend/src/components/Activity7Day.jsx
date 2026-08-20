@@ -204,13 +204,15 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
       RUS: acc.RUS + (curr.RUS || 0),
       FEP: acc.FEP + (curr.FEP || 0),
       MOV: acc.MOV + (curr.MOV || 0),
+      RES: acc.RES + (curr.RES || 0),
       DRN: acc.DRN + (curr.DRN || 0)
-    }), { REL: 0, RUS: 0, FEP: 0, MOV: 0, DRN: 0 });
+    }), { REL: 0, RUS: 0, FEP: 0, MOV: 0, RES: 0, DRN: 0 });
     return {
       REL: (sums.REL / history.length).toFixed(1),
       RUS: (sums.RUS / history.length).toFixed(1),
       FEP: (sums.FEP / history.length).toFixed(1),
       MOV: (sums.MOV / history.length).toFixed(1),
+      RES: (sums.RES / history.length).toFixed(1),
       DRN: (sums.DRN / history.length).toFixed(1)
     };
   })();
@@ -285,6 +287,12 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                   <i className="fa-solid fa-arrows-spin" style={{ color: '#06B6D4' }}></i> Standing Rumination (RUS):
                 </span>
                 <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{formatHours(avg.RUS)}/day</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                  <i className="fa-solid fa-shoe-prints" style={{ color: '#64748B' }}></i> Standing Rest (RES):
+                </span>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#94A3B8' }}>{formatHours(avg.RES)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
@@ -374,7 +382,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
                         {new Date(log.endTime).toLocaleTimeString()}
                       </td>
-                      <td><strong style={{ color: 'var(--text-primary)' }}>{log.durationMinutes} mins</strong></td>
+                      <td><strong style={{ color: 'var(--text-primary)' }}>{log.durationDisplay || `${log.durationMinutes} mins`}</strong></td>
                       <td>
                         <span className="code-badge" style={{ background: `${log.color || '#38bdf8'}25`, color: log.color || 'var(--accent-sky)', border: `1px solid ${log.color || 'var(--accent-sky)'}` }}>
                           {log.activityCode} - {log.activityName}
