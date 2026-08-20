@@ -74,7 +74,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
   const barChartData = {
     labels: labels,
     datasets: [
-      { label: `REL (${activities?.REL?.name || 'Lying Rest'})`, data: history.map(d => d.REL), backgroundColor: activities?.REL?.color || '#8B5CF6', borderRadius: 4 },
+      { label: `Rest (${activities?.REL?.name || 'Lying'} & RES)`, data: history.map(d => d.REL), backgroundColor: activities?.REL?.color || '#8B5CF6', borderRadius: 4 },
       { label: `RUS (${activities?.RUS?.name || 'Rumination'})`, data: history.map(d => d.RUS), backgroundColor: activities?.RUS?.color || '#06B6D4', borderRadius: 4 },
       { label: `FEP (${activities?.FEP?.name || 'Feeding'})`, data: history.map(d => d.FEP), backgroundColor: activities?.FEP?.color || '#10B981', borderRadius: 4 },
       { label: `MOV (${activities?.MOV?.name || 'Active'})`, data: history.map(d => d.MOV), backgroundColor: activities?.MOV?.color || '#F59E0B', borderRadius: 4 },
@@ -278,7 +278,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <i className="fa-solid fa-bed" style={{ color: '#8B5CF6' }}></i> Lying Rest (REL):
+                  <i className="fa-solid fa-bed" style={{ color: '#8B5CF6' }}></i> Total Rest (REL+RES):
                 </span>
                 <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-purple)' }}>{formatHours(avg.REL)}/day</strong>
               </div>
@@ -287,12 +287,6 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                   <i className="fa-solid fa-arrows-spin" style={{ color: '#06B6D4' }}></i> Standing Rumination (RUS):
                 </span>
                 <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{formatHours(avg.RUS)}/day</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <i className="fa-solid fa-shoe-prints" style={{ color: '#64748B' }}></i> Standing Rest (RES):
-                </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#94A3B8' }}>{formatHours(avg.RES)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>

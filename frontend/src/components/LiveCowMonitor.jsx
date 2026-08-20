@@ -334,8 +334,8 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             <div className="metric-value">
               {formatHours(health.lyingHoursToday)}
             </div>
-            <div className="metric-title">LYING REST HOURS</div>
-            <div className="metric-footer">Comfort Index</div>
+            <div className="metric-title">RESTING TOTAL</div>
+            <div className="metric-footer">Comfort Index (REL+RES)</div>
           </div>
         </div>
 
