@@ -107,11 +107,11 @@ export default function HardwareSpecs({ currentCowId, currentData, onReloadData 
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.65rem', marginTop: '1rem' }}>
-              <button className="btn btn-primary" onClick={handleSendDump} style={{ flex: 1, height: '36px' }}>
+            <div className="hw-actions-group">
+              <button className="btn btn-primary hw-action-btn" onClick={handleSendDump}>
                 <i className="fa-solid fa-cloud-arrow-down"></i> TRIGGER DUMP (0x5900BBCC)
               </button>
-              <button className="btn btn-danger" onClick={handleSendReset} style={{ flex: 1, height: '36px' }}>
+              <button className="btn btn-danger hw-action-btn" onClick={handleSendReset}>
                 <i className="fa-solid fa-rotate-left"></i> RESET BUFFER (0x5900FFFF)
               </button>
             </div>

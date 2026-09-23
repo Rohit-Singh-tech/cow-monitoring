@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 from fastapi import FastAPI, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -157,8 +158,8 @@ def api_get_cows(db: Session = Depends(get_db)):
     return {"success": True, "cows": cows_data}
 
 @app.get("/api/cow/{cow_id}/current", tags=["Frontend Compatibility"])
-def api_get_cow_current(cow_id: str, db: Session = Depends(get_db)):
-    dash = get_cow_live_dashboard(cow_id, db)
+def api_get_cow_current(cow_id: str, target_date: Optional[str] = None, db: Session = Depends(get_db)):
+    dash = get_cow_live_dashboard(cow_id, target_date=target_date, db=db)
     return {"success": True, **dash}
 
 @app.get("/api/cow/{cow_id}/7day", tags=["Frontend Compatibility"])

@@ -23,22 +23,22 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
   return (
     <>
       <header className="navbar">
-        <div className="navbar-brand-area">
-          <button
-            onClick={onToggleMenu}
-            className="navbar-toggle-btn"
-            title="Toggle Navigation Menu"
-          >
-            <i className="fa-solid fa-bars-staggered"></i>
-          </button>
-          <h2 className="navbar-title">
-            SYSTEM OVERVIEW
-          </h2>
-        </div>
+        <div className="navbar-top-bar">
+          <div className="navbar-brand-area">
+            <button
+              onClick={onToggleMenu}
+              className="navbar-toggle-btn"
+              title="Toggle Navigation Menu"
+            >
+              <i className="fa-solid fa-bars-staggered"></i>
+            </button>
+            <h2 className="navbar-title">
+              SYSTEM OVERVIEW
+            </h2>
+          </div>
 
-        <div className="header-controls">
-          {/* Node Selector */}
-          <div className="cow-select-wrapper">
+          {/* Desktop inline selector */}
+          <div className="cow-select-wrapper desktop-select">
             <span className="cow-select-label">NODE:</span>
             <select
               className="cow-select"
@@ -58,47 +58,75 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
             </select>
           </div>
 
-          {/* Live Uplink Status */}
-          <div className="status-pill online">
-            <span className="pulse-dot"></span>
-            CONNECTED
+          <div className="header-controls">
+            {/* Live Uplink Status */}
+            <div className="status-pill online desktop-only-inline">
+              <span className="pulse-dot"></span>
+              CONNECTED
+            </div>
+
+            {/* Live Monospace Clock */}
+            <div className="header-clock desktop-only-inline">
+              {new Date().toLocaleTimeString('en-US', { hour12: false })}
+            </div>
+
+            {/* Theme Toggle */}
+            <button
+              onClick={onToggleTheme}
+              className="navbar-icon-btn"
+              title="Toggle Dark / Light Theme"
+            >
+              <i className={theme === 'light' ? "fa-solid fa-moon" : "fa-solid fa-sun"} style={{ color: theme === 'light' ? '#7C3AED' : '#FBBF24' }}></i>
+            </button>
+
+            {/* Alerts Trigger Button */}
+            <button
+              className={`status-pill ${alertCount > 0 ? 'critical' : 'online'} navbar-alerts-btn`}
+              style={{ cursor: alertCount > 0 ? 'pointer' : 'default', outline: 'none' }}
+              onClick={() => { if (alertCount > 0) setShowDropdown(!showDropdown); }}
+              title={alertCount > 0 ? "Click to view active health alerts" : "All herd members healthy"}
+            >
+              <i className={alertCount > 0 ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-circle-check"}></i>
+              <span className="alerts-text-full">{alertCount > 0 ? `${alertCount} ALERT${alertCount !== 1 ? 'S' : ''}` : 'HEALTHY'}</span>
+              <span className="alerts-text-compact">{alertCount > 0 ? `${alertCount}` : 'OK'}</span>
+            </button>
+
+            {/* DUMP LOGS CSV Button */}
+            <a
+              href={`/api/export/csv?cowId=${currentCowId}`}
+              className="btn btn-secondary btn-dump-logs"
+              target="_blank"
+              rel="noreferrer"
+              title="Download 24h CSV logs"
+            >
+              <i className="fa-solid fa-file-arrow-down"></i>
+              <span className="dump-logs-text-full">DUMP LOGS</span>
+              <span className="dump-logs-text-compact">CSV</span>
+            </a>
           </div>
+        </div>
 
-          {/* Live Monospace Clock */}
-          <div className="header-clock" style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '0 0.25rem' }}>
-            {new Date().toLocaleTimeString('en-US', { hour12: false })}
+        {/* Mobile / Tablet Full-Width Node Selector Sub-Row */}
+        <div className="navbar-subrow mobile-select">
+          <div className="cow-select-wrapper">
+            <span className="cow-select-label">NODE:</span>
+            <select
+              className="cow-select"
+              value={currentCowId}
+              onChange={(e) => onSelectCow(e.target.value)}
+            >
+              {cows.map((c) => {
+                const isAws = c.source === 'aws_api' || String(c.id).startsWith('aws-');
+                const srcTag = isAws ? 'Aws' : 'Gatewayless';
+                const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
+                return (
+                  <option key={c.id} value={c.id}>
+                    [{srcTag}] #{c.device_id} - {c.name} ({healthTag})
+                  </option>
+                );
+              })}
+            </select>
           </div>
-
-          {/* Theme Toggle */}
-          <button
-            onClick={onToggleTheme}
-            className="navbar-icon-btn"
-            title="Toggle Dark / Light Theme"
-          >
-            <i className={theme === 'light' ? "fa-solid fa-moon" : "fa-solid fa-sun"} style={{ color: theme === 'light' ? '#7C3AED' : '#FBBF24' }}></i>
-          </button>
-
-          {/* Alerts Trigger Button */}
-          <button
-            className={`status-pill ${alertCount > 0 ? 'critical' : 'online'}`}
-            style={{ cursor: alertCount > 0 ? 'pointer' : 'default', outline: 'none' }}
-            onClick={() => { if (alertCount > 0) setShowDropdown(!showDropdown); }}
-            title={alertCount > 0 ? "Click to view active health alerts" : "All herd members healthy"}
-          >
-            <i className={alertCount > 0 ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-circle-check"}></i>
-            {alertCount > 0 ? `${alertCount} ALERT${alertCount !== 1 ? 'S' : ''}` : 'ALL HEALTHY'}
-          </button>
-
-          {/* DUMP LOGS CSV Button */}
-          <a
-            href={`/api/export/csv?cowId=${currentCowId}`}
-            className="btn btn-secondary btn-dump-logs"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <i className="fa-solid fa-file-arrow-down"></i>
-            DUMP LOGS
-          </a>
         </div>
       </header>
 

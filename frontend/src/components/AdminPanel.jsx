@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import './Login.css';
 
 const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
 
@@ -110,66 +109,55 @@ export default function AdminPanel({ onRefreshCows }) {
   };
 
   return (
-    <div style={{ padding: '1.5rem 2rem', color: '#f8fafc', maxWidth: '1400px', margin: '0 auto' }}>
+    <div className="tag-registry-container">
       
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid #1e293b', paddingBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+      <div className="tag-registry-header">
         <div>
-          <h2 style={{ fontSize: '1.85rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem', fontFamily: 'var(--font-display)' }}>
+          <h2 className="tag-registry-title">
             <i className="fa-solid fa-tags" style={{ color: 'var(--accent-emerald)' }}></i>
             Cow Tag Registry
           </h2>
-          <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.25rem' }}>
+          <div className="tag-registry-subtitle">
             Configure and register cattle metadata for both Gatewayless and Aws telemetry nodes.
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)', fontWeight: 700 }}>
-            <i className="fa-solid fa-database" style={{ marginRight: '0.35rem' }}></i>
+        <div className="tag-registry-badges">
+          <span className="registry-pill pill-postgres">
+            <i className="fa-solid fa-database"></i>
             PostgreSQL Sync
           </span>
-          <span style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem', borderRadius: '6px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)', fontWeight: 700 }}>
-            <i className="fa-solid fa-microchip" style={{ marginRight: '0.35rem' }}></i>
+          <span className="registry-pill pill-nodes">
+            <i className="fa-solid fa-microchip"></i>
             {tags.length} Nodes Configured
           </span>
         </div>
       </div>
 
       {message && (
-        <div style={{ 
-          padding: '0.85rem 1.25rem', 
-          marginBottom: '1.5rem', 
-          borderRadius: '8px', 
-          background: message.type === 'error' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
-          color: message.type === 'error' ? '#ef4444' : '#10b981',
-          border: `1px solid ${message.type === 'error' ? '#ef4444' : '#10b981'}`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          fontSize: '0.9rem'
-        }}>
-          <span>
-            <i className={`fa-solid ${message.type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'}`} style={{ marginRight: '0.5rem' }}></i>
-            {message.text}
-          </span>
-          <button onClick={() => setMessage(null)} style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '1rem' }}>
+        <div className={`registry-alert ${message.type === 'error' ? 'alert-error' : 'alert-success'}`}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <i className={`fa-solid ${message.type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'}`}></i>
+            <span>{message.text}</span>
+          </div>
+          <button onClick={() => setMessage(null)} className="alert-close-btn">
             <i className="fa-solid fa-xmark"></i>
           </button>
         </div>
       )}
 
-      {/* NEW NODE / EDIT NODE Form (Styled exactly as requested in Image 1) */}
-      <div className="login-card" style={{ padding: '1.5rem 1.75rem', marginBottom: '2rem', maxWidth: '100%', margin: '0 0 2rem 0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.15rem' }}>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#f8fafc', margin: 0, fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <i className={`fa-solid ${isEditing ? 'fa-pen-to-square' : 'fa-circle-plus'}`} style={{ color: isEditing ? '#38bdf8' : '#8b5cf6' }}></i>
+      {/* NEW NODE / EDIT NODE Form */}
+      <div className="glass-panel registry-form-card">
+        <div className="registry-card-header">
+          <h3 className="registry-form-title">
+            <i className={`fa-solid ${isEditing ? 'fa-pen-to-square' : 'fa-circle-plus'}`} style={{ color: isEditing ? 'var(--accent-sky)' : 'var(--accent-purple)' }}></i>
             {isEditing ? `EDIT NODE #${tagDeviceId}` : 'NEW NODE'}
           </h3>
           {isEditing && (
             <button 
               type="button" 
               onClick={handleCancelEdit}
-              style={{ background: 'transparent', border: '1px solid #475569', color: '#94a3b8', borderRadius: '6px', padding: '0.3rem 0.65rem', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+              className="btn-cancel-edit"
             >
               Cancel Edit
             </button>
@@ -177,18 +165,11 @@ export default function AdminPanel({ onRefreshCows }) {
         </div>
 
         <form onSubmit={handleSaveDynamicTag}>
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr)) 120px', 
-            gap: '0.85rem', 
-            alignItems: 'flex-end' 
-          }}>
+          <div className="registry-form-grid">
             
             {/* DEVICE ID */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                DEVICE ID
-              </label>
+            <div className="form-group-item">
+              <label className="form-item-label">DEVICE ID</label>
               <input
                 type="text"
                 required
@@ -196,237 +177,170 @@ export default function AdminPanel({ onRefreshCows }) {
                 value={tagDeviceId}
                 onChange={e => setTagDeviceId(e.target.value)}
                 disabled={isEditing}
-                style={{ 
-                  width: '100%', 
-                  padding: '0.65rem 0.85rem', 
-                  background: '#0b0f19', 
-                  border: '1px solid #1e293b', 
-                  borderRadius: '8px', 
-                  color: '#f8fafc', 
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-main)'
-                }}
+                className="form-item-input"
               />
             </div>
 
             {/* SUBJECT NAME */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                SUBJECT NAME
-              </label>
+            <div className="form-group-item">
+              <label className="form-item-label">SUBJECT NAME</label>
               <input
                 type="text"
                 required
                 placeholder="Bovine #100"
                 value={tagName}
                 onChange={e => setTagName(e.target.value)}
-                style={{ 
-                  width: '100%', 
-                  padding: '0.65rem 0.85rem', 
-                  background: '#0b0f19', 
-                  border: '1px solid #1e293b', 
-                  borderRadius: '8px', 
-                  color: '#f8fafc', 
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-main)'
-                }}
+                className="form-item-input"
               />
             </div>
 
             {/* BREED / TYPE */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                BREED / TYPE
-              </label>
+            <div className="form-group-item">
+              <label className="form-item-label">BREED / TYPE</label>
               <input
                 type="text"
                 placeholder="Holstein"
                 value={tagBreed}
                 onChange={e => setTagBreed(e.target.value)}
-                style={{ 
-                  width: '100%', 
-                  padding: '0.65rem 0.85rem', 
-                  background: '#0b0f19', 
-                  border: '1px solid #1e293b', 
-                  borderRadius: '8px', 
-                  color: '#f8fafc', 
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-main)'
-                }}
+                className="form-item-input"
               />
             </div>
 
             {/* BARN LOCATION */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                BARN LOCATION
-              </label>
+            <div className="form-group-item">
+              <label className="form-item-label">BARN LOCATION</label>
               <input
                 type="text"
                 placeholder="Sector A"
                 value={tagLocation}
                 onChange={e => setTagLocation(e.target.value)}
-                style={{ 
-                  width: '100%', 
-                  padding: '0.65rem 0.85rem', 
-                  background: '#0b0f19', 
-                  border: '1px solid #1e293b', 
-                  borderRadius: '8px', 
-                  color: '#f8fafc', 
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-main)'
-                }}
+                className="form-item-input"
               />
             </div>
 
             {/* WEIGHT */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                WEIGHT
-              </label>
+            <div className="form-group-item">
+              <label className="form-item-label">WEIGHT</label>
               <input
                 type="text"
                 placeholder="500 kg"
                 value={tagWeight}
                 onChange={e => setTagWeight(e.target.value)}
-                style={{ 
-                  width: '100%', 
-                  padding: '0.65rem 0.85rem', 
-                  background: '#0b0f19', 
-                  border: '1px solid #1e293b', 
-                  borderRadius: '8px', 
-                  color: '#f8fafc', 
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-main)'
-                }}
+                className="form-item-input"
               />
             </div>
 
             {/* RESEARCH NOTES */}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                RESEARCH NOTES
-              </label>
+            <div className="form-group-item">
+              <label className="form-item-label">RESEARCH NOTES</label>
               <input
                 type="text"
                 placeholder="Grazing"
                 value={tagNotes}
                 onChange={e => setTagNotes(e.target.value)}
-                style={{ 
-                  width: '100%', 
-                  padding: '0.65rem 0.85rem', 
-                  background: '#0b0f19', 
-                  border: '1px solid #1e293b', 
-                  borderRadius: '8px', 
-                  color: '#f8fafc', 
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-main)'
-                }}
+                className="form-item-input"
               />
             </div>
 
-            {/* ACTION BUTTON */}
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                style={{
-                  width: '100%',
-                  height: '38px',
-                  padding: '0 0.85rem',
-                  borderRadius: '8px',
-                  background: isEditing 
-                    ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)' 
-                    : 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-                  color: '#ffffff',
-                  border: 'none',
-                  fontWeight: 800,
-                  fontSize: '0.85rem',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.45rem',
-                  transition: 'all 0.2s',
-                  boxShadow: isEditing 
-                    ? '0 4px 12px rgba(16, 185, 129, 0.3)' 
-                    : '0 4px 12px rgba(124, 58, 237, 0.35)',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {loading ? (
-                  <i className="fa-solid fa-spinner fa-spin"></i>
-                ) : isEditing ? (
-                  <>Update Node</>
-                ) : (
-                  <>Add Node</>
-                )}
-              </button>
-            </div>
+          </div>
 
+          {/* Attractive Modern Form Actions Footer */}
+          <div className="registry-form-actions">
+            {isEditing && (
+              <button 
+                type="button" 
+                onClick={handleCancelEdit}
+                className="btn-cancel-edit-action"
+              >
+                <i className="fa-solid fa-xmark"></i> Cancel Edit
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className={`btn-save-node ${isEditing ? 'editing' : ''}`}
+            >
+              {loading ? (
+                <>
+                  <i className="fa-solid fa-circle-notch fa-spin"></i>
+                  <span>Saving Node...</span>
+                </>
+              ) : isEditing ? (
+                <>
+                  <i className="fa-solid fa-check"></i>
+                  <span>Update Cattle Node</span>
+                </>
+              ) : (
+                <>
+                  <i className="fa-solid fa-plus"></i>
+                  <span>Add Cattle Node</span>
+                </>
+              )}
+            </button>
           </div>
         </form>
       </div>
 
-      {/* Active Registered Cattle Nodes Table */}
-      <div className="login-card" style={{ padding: '1.75rem', margin: 0, maxWidth: '100%' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-          <h3 className="login-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
-            <i className="fa-solid fa-list-check" style={{ color: '#10b981' }}></i>
+      {/* Active Registered Cattle Nodes Table / Cards */}
+      <div className="glass-panel registry-table-card">
+        <div className="registry-card-header">
+          <h3 className="registry-table-title">
+            <i className="fa-solid fa-list-check" style={{ color: 'var(--accent-emerald)' }}></i>
             Registered Cattle Nodes
           </h3>
-          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+          <span className="registry-table-hint">
             Click edit to load node details into form
           </span>
         </div>
         
-        <div style={{ overflowX: 'auto', background: '#0b0f19', borderRadius: '8px', border: '1px solid #1e293b' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+        {/* Desktop View: Full Formatted Table */}
+        <div className="registry-table-wrapper desktop-only">
+          <table className="custom-table registry-table">
             <thead>
-              <tr style={{ background: '#1e293b', fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                <th style={{ padding: '0.75rem 1rem' }}>Device ID</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Subject Name</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Breed / Type</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Barn Location</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Weight</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Research Notes</th>
-                <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Actions</th>
+              <tr>
+                <th>Device ID</th>
+                <th>Subject Name</th>
+                <th>Breed / Type</th>
+                <th>Barn Location</th>
+                <th>Weight</th>
+                <th>Research Notes</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {tags && tags.length > 0 ? (
                 tags.map(t => (
-                  <tr key={t.id || t.device_id} style={{ borderBottom: '1px solid #1e293b', fontSize: '0.85rem' }}>
-                    <td style={{ padding: '0.75rem 1rem', fontWeight: 800, color: '#10b981', fontFamily: 'var(--font-mono)' }}>
+                  <tr key={t.id || t.device_id}>
+                    <td className="node-id-cell">
                       #{t.device_id}
                     </td>
-                    <td style={{ padding: '0.75rem 1rem', fontWeight: 700, color: '#f8fafc' }}>
+                    <td className="node-name-cell">
                       {t.name}
                     </td>
-                    <td style={{ padding: '0.75rem 1rem', color: '#94a3b8' }}>
+                    <td className="node-muted-cell">
                       {t.breed || '—'}
                     </td>
-                    <td style={{ padding: '0.75rem 1rem', color: '#cbd5e1' }}>
+                    <td className="node-location-cell">
                       {t.location || '—'}
                     </td>
-                    <td style={{ padding: '0.75rem 1rem', color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>
-                      {t.weight ? `${t.weight} kg` : '—'}
+                    <td className="node-weight-cell">
+                      {t.weight ? (String(t.weight).includes('kg') ? t.weight : `${t.weight} kg`) : '—'}
                     </td>
-                    <td style={{ padding: '0.75rem 1rem', color: '#94a3b8', maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td className="node-notes-cell">
                       {t.notes || '—'}
                     </td>
-                    <td style={{ padding: '0.75rem 1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="node-actions-cell">
                       <button 
                         onClick={() => handleEditTagClick(t)} 
                         title="Edit this node"
-                        style={{ background: 'transparent', border: 'none', color: '#38bdf8', cursor: 'pointer', fontSize: '0.95rem', marginRight: '0.85rem' }}
+                        className="action-btn edit-btn"
                       >
                         <i className="fa-solid fa-pen"></i>
                       </button>
                       <button 
                         onClick={() => handleDeleteTag(t.device_id)} 
                         title="Delete node tag"
-                        style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.95rem' }}
+                        className="action-btn delete-btn"
                       >
                         <i className="fa-solid fa-trash"></i>
                       </button>
@@ -435,8 +349,8 @@ export default function AdminPanel({ onRefreshCows }) {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b' }}>
-                    <i className="fa-solid fa-tags" style={{ fontSize: '1.5rem', marginBottom: '0.5rem', display: 'block', color: '#475569' }}></i>
+                  <td colSpan={7} className="registry-empty-cell">
+                    <i className="fa-solid fa-tags"></i>
                     No custom cow tags registered yet. Add a node above to customize livestock names and barn locations!
                   </td>
                 </tr>
@@ -444,6 +358,63 @@ export default function AdminPanel({ onRefreshCows }) {
             </tbody>
           </table>
         </div>
+
+        {/* Mobile / Tablet Responsive Cards Grid (No horizontal scroll, 100% details visible) */}
+        <div className="registry-cards-grid mobile-only">
+          {tags && tags.length > 0 ? (
+            tags.map(t => (
+              <div key={t.id || t.device_id} className="node-mobile-card">
+                <div className="node-mobile-card-top">
+                  <div className="node-mobile-id-group">
+                    <span className="node-mobile-id-badge">#{t.device_id}</span>
+                    <strong className="node-mobile-name">{t.name}</strong>
+                  </div>
+                  <div className="node-mobile-actions">
+                    <button 
+                      onClick={() => handleEditTagClick(t)} 
+                      title="Edit this node"
+                      className="action-btn edit-btn"
+                    >
+                      <i className="fa-solid fa-pen"></i> Edit
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteTag(t.device_id)} 
+                      title="Delete node tag"
+                      className="action-btn delete-btn"
+                    >
+                      <i className="fa-solid fa-trash"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="node-mobile-details-grid">
+                  <div className="detail-item">
+                    <span className="detail-label">Breed:</span>
+                    <span className="detail-val">{t.breed || '—'}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Location:</span>
+                    <span className="detail-val">{t.location || '—'}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Weight:</span>
+                    <span className="detail-val mono">{t.weight ? (String(t.weight).includes('kg') ? t.weight : `${t.weight} kg`) : '—'}</span>
+                  </div>
+                  <div className="detail-item full-width">
+                    <span className="detail-label">Research Notes:</span>
+                    <span className="detail-val notes">{t.notes || 'No notes specified.'}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="registry-empty-card">
+              <i className="fa-solid fa-tags"></i>
+              <p>No custom cow tags registered yet. Add a node above to customize livestock names and barn locations!</p>
+            </div>
+          )}
+        </div>
+
       </div>
 
     </div>

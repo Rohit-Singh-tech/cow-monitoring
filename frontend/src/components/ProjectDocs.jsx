@@ -12,9 +12,9 @@ export default function ProjectDocs() {
       </div>
       <div className="card-body">
         
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
+        <div className="project-docs-grid">
           
-          <div>
+          <div className="project-docs-main">
             <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.65rem', fontFamily: 'var(--font-display)' }}>
               Project Background & Architecture Summary
             </h3>

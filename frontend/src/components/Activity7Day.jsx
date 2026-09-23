@@ -25,10 +25,34 @@ ChartJS.register(
   Legend
 );
 
-export default function Activity7Day({ data7Day, logs, cowId, theme }) {
+export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }) {
   const { activities } = useConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+
+  // Show loading state when fetching (especially for AWS devices which take longer)
+  if (isLoading && !data7Day) {
+    return (
+      <div className="glass-panel" style={{ padding: '4rem 2rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ position: 'relative', width: '64px', height: '64px' }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '3rem', color: 'var(--accent-emerald)', position: 'absolute', top: 0, left: 0 }}></i>
+        </div>
+        <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)' }}>Fetching 7-Day Activity Data</div>
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '320px', lineHeight: 1.5 }}>
+          Querying each day individually from the AWS API — this takes up to 30 seconds on first load, then is cached for 24 hours.
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+          {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d, i) => (
+            <div key={d} style={{
+              width: '32px', height: '48px', borderRadius: '6px',
+              background: `rgba(16,185,129,${0.15 + i * 0.05})`,
+              animation: `pulse 1.4s ease-in-out ${i * 0.1}s infinite`
+            }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (!data7Day) {
     return (
@@ -312,7 +336,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
 
       </div>
 
-      {/* Activity Transition Log Table */}
+      {/* Activity Transition Log Table & Responsive Cards */}
       <div className="glass-panel">
         <div className="card-header-box" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
           <div className="card-title">
@@ -327,7 +351,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
               className="search-input-box"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              style={{ width: '180px' }}
+              style={{ width: '150px' }}
             />
             <select
               className="search-input-box"
@@ -340,14 +364,15 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
               <option value="Nutrition">Nutrition</option>
               <option value="Locomotion">Locomotion</option>
             </select>
-            <a href={`/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer">
+            <a href={`/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer" style={{ height: '34px', fontSize: '0.78rem' }}>
               <i className="fa-solid fa-file-arrow-down"></i> EXPORT CSV
             </a>
           </div>
         </div>
 
         <div className="card-body" style={{ padding: 0 }}>
-          <div className="table-responsive">
+          {/* Desktop Table View */}
+          <div className="table-responsive logs-desktop-table">
             <table className="custom-table">
               <thead>
                 <tr>
@@ -371,10 +396,10 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                         {data7Day?.device_id ? `Node-${data7Day.device_id}` : `Node-${cowId}`}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
-                        {new Date(log.startTime).toLocaleTimeString()}
+                        {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
-                        {new Date(log.endTime).toLocaleTimeString()}
+                        {new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td><strong style={{ color: 'var(--text-primary)' }}>{log.durationDisplay || `${log.durationMinutes} mins`}</strong></td>
                       <td>
@@ -398,6 +423,61 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile / Tablet Responsive Timeline View (100% visible, zero horizontal scroll) */}
+          <div className="logs-mobile-timeline">
+            {filteredLogs && filteredLogs.length > 0 ? (
+              filteredLogs.map(log => (
+                <div key={log.logId} className="activity-log-card">
+                  <div className="log-card-header">
+                    <div 
+                      className="log-activity-badge" 
+                      style={{ 
+                        background: `${log.color || '#38bdf8'}20`, 
+                        color: log.color || 'var(--accent-sky)', 
+                        border: `1px solid ${log.color || 'var(--accent-sky)'}40` 
+                      }}
+                    >
+                      <span className="dot" style={{ background: log.color || 'var(--accent-sky)' }}></span>
+                      <strong>{log.activityCode}</strong> • {log.activityName}
+                    </div>
+                    <span className="log-duration-chip">
+                      <i className="fa-solid fa-stopwatch"></i> {log.durationDisplay || `${log.durationMinutes} mins`}
+                    </span>
+                  </div>
+
+                  <div className="log-card-body">
+                    <div className="log-time-row">
+                      <span className="log-time">
+                        <i className="fa-regular fa-clock"></i> {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} → {new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <span className="meta-chip">{log.category}</span>
+                    </div>
+
+                    <div className="log-meta-row">
+                      <div className="log-confidence-bar-wrap">
+                        <span className="confidence-label">ML Confidence: <strong>{log.confidencePercent}%</strong></span>
+                        <div className="confidence-track">
+                          <div 
+                            className="confidence-fill" 
+                            style={{ 
+                              width: `${log.confidencePercent}%`, 
+                              background: log.confidencePercent >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' 
+                            }}
+                          ></div>
+                        </div>
+                      </div>
+                      <span className="log-packet-id">{log.startPacketId} – {log.endPacketId}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)' }}>
+                No activity logs match your search or filter.
+              </div>
+            )}
           </div>
         </div>
       </div>

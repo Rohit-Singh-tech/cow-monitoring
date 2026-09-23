@@ -33,6 +33,7 @@ export default function App() {
   const [currentData, setCurrentData] = useState(null);
   const [data7Day, setData7Day] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [is7DayLoading, setIs7DayLoading] = useState(false);
   const [accelBuffer, setAccelBuffer] = useState({ x: [], y: [], z: [], mag: [], labels: [] });
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
 
@@ -88,7 +89,7 @@ export default function App() {
     cowsFetchingRef.current = true;
 
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/cows`, {}, 8000);
+      const res = await fetchWithTimeout(`${API_BASE}/api/cows`, {}, 12000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.success && data.cows && data.cows.length > 0) {
@@ -157,7 +158,7 @@ export default function App() {
 
     const loadCowData = async (cowId) => {
       try {
-        const resCurr = await fetchWithTimeout(`${API_BASE}/api/cow/${cowId}/current`, {}, 10000);
+        const resCurr = await fetchWithTimeout(`${API_BASE}/api/cow/${cowId}/current`, {}, 15000);
         if (!resCurr.ok) throw new Error(`HTTP ${resCurr.status}`);
         const dataCurr = await resCurr.json();
         if (isSubscribed && dataCurr.success) {
@@ -177,25 +178,48 @@ export default function App() {
     };
   }, [currentCowId, isAuthenticated]);
 
-  // Load 7-day & logs only if on 7day tab
+  // Load 7-day & logs only if on 7day tab — fetch both in parallel for speed
+  // Uses stale-while-revalidate: backend returns instantly (empty on first cold call),
+  // then auto-retries after 15s to get the background-computed data.
   useEffect(() => {
     if (!currentCowId || activeTab !== '7day' || !isAuthenticated) return;
+    let isSubscribed = true;
+    let retryTimerId = null;
 
-    const fetch7Day = async () => {
+    const fetch7Day = async (isRetry = false) => {
+      if (!isRetry) setIs7DayLoading(true);
       try {
-        const res7 = await fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/7day`, {}, 10000);
-        const data7 = await res7.json();
+        // Fire both requests simultaneously — don't wait for one before starting other
+        const [res7, resLogs] = await Promise.all([
+          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/7day`, {}, 60000),
+          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=50`, {}, 60000)
+        ]);
+        const [data7, dataLogs] = await Promise.all([res7.json(), resLogs.json()]);
+        if (!isSubscribed) return;
         if (data7.success) setData7Day(data7);
-
-        const resLogs = await fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=50`, {}, 10000);
-        const dataLogs = await resLogs.json();
         if (dataLogs.success) setLogs(dataLogs.logs);
+
+        // If backend returned empty data (cache miss, bg computing), auto-retry after 15s
+        const isEmpty7Day = !data7.monitoredHours || data7.monitoredHours.every(h => h === 0);
+        const isEmptyLogs = !dataLogs.logs || dataLogs.logs.length === 0;
+        const isAwsDevice = String(currentCowId).startsWith('aws-');
+        if (isAwsDevice && isEmpty7Day && isEmptyLogs && isSubscribed) {
+          setIs7DayLoading(true); // Keep spinner — bg is computing
+          retryTimerId = setTimeout(() => { if (isSubscribed) fetch7Day(true); }, 15000);
+          return;
+        }
       } catch (err) {
         console.error('Error loading 7day data:', err);
+      } finally {
+        if (isSubscribed && !retryTimerId) setIs7DayLoading(false);
       }
     };
 
     fetch7Day();
+    return () => {
+      isSubscribed = false;
+      if (retryTimerId) clearTimeout(retryTimerId);
+    };
   }, [currentCowId, activeTab, isAuthenticated]);
 
   // 3. Real-time Telemetry Stream Loop (15s interval, with in-flight guard + error backoff)
@@ -225,11 +249,13 @@ export default function App() {
       }
     };
 
-    // Dynamic interval: 15s normal, back off on errors
+    // Dynamic interval: AWS devices poll every 30s (slow API), DB devices every 15s
     const getInterval = () => {
       const errorCount = liveErrorCountRef.current;
-      if (errorCount === 0) return 15000;       // 15s normal
-      if (errorCount < 3) return 30000;          // 30s on first few errors
+      const isAws = currentCowId && String(currentCowId).startsWith('aws-');
+      const baseInterval = isAws ? 30000 : 15000;
+      if (errorCount === 0) return baseInterval;
+      if (errorCount < 3) return baseInterval * 2;
       return Math.min(errorCount * 30000, 300000); // Max 5 min
     };
 
@@ -340,6 +366,7 @@ export default function App() {
               logs={logs}
               cowId={currentCowId}
               theme={theme}
+              isLoading={is7DayLoading}
             />
           )}
 

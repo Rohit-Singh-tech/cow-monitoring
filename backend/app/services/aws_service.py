@@ -1,4 +1,4 @@
-import urllib.request
+import requests as _requests
 import gzip
 import json
 import math
@@ -72,45 +72,26 @@ class AwsTelemetryService:
         """
         Fetch raw packets from AWS Lambda CowNeck_API_Function.
         Handles gzip decompression, timeouts, and network errors.
+        - Past days: 6s timeout, empty results cached 24h (no repeated timeouts).
+        - Today: 10s timeout, results cached 5min.
         """
         now = datetime.now(timezone.utc)
         
-        # Resolve 7-day date window (handles current date as start_date and 7 days back as end_date)
-        if not start_date and not end_date:
-            d_start = now - timedelta(days=7)
-            d_end = now
-        elif start_date and not end_date:
-            try:
-                dt = datetime.strptime(start_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
-                if dt >= now - timedelta(days=1):
-                    d_start = dt - timedelta(days=7)
-                    d_end = dt
-                else:
-                    d_start = dt
-                    d_end = now
-            except Exception:
-                d_start = now - timedelta(days=7)
-                d_end = now
+        # Target specific date for 24 hours (startdate=target&enddate=target)
+        if start_date and not end_date:
+            resolved_start = start_date.strip()
+            resolved_end = start_date.strip()
         elif end_date and not start_date:
-            try:
-                dt = datetime.strptime(end_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
-                d_start = dt - timedelta(days=7)
-                d_end = dt
-            except Exception:
-                d_start = now - timedelta(days=7)
-                d_end = now
+            resolved_start = end_date.strip()
+            resolved_end = end_date.strip()
+        elif start_date and end_date:
+            resolved_start = start_date.strip()
+            resolved_end = end_date.strip()
         else:
-            try:
-                dt1 = datetime.strptime(start_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
-                dt2 = datetime.strptime(end_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
-                d_start = min(dt1, dt2)
-                d_end = max(dt1, dt2)
-            except Exception:
-                d_start = now - timedelta(days=7)
-                d_end = now
-
-        resolved_start = d_start.strftime("%d-%m-%Y")
-        resolved_end = d_end.strftime("%d-%m-%Y")
+            # Default for 24-hour telemetry: target today's date
+            today_str = now.strftime("%d-%m-%Y")
+            resolved_start = today_str
+            resolved_end = today_str
 
         cache_key = f"raw_{device_id}_{resolved_start}_{resolved_end}"
         cached = _AWS_CACHE.get(cache_key)
@@ -118,37 +99,50 @@ class AwsTelemetryService:
             return cached["data"]
 
         url = f"{settings.AWS_COWNECK_API_URL}?deviceid={device_id}&startdate={resolved_start}&enddate={resolved_end}"
-        req = urllib.request.Request(
-            url, 
-            headers={
-                "User-Agent": "CowMonitoring-Backend/1.0",
-                "Accept-Encoding": "gzip, deflate"
-            }
-        )
+
+        # Use shorter read timeout for past days — they either have data or they don't.
+        # requests(timeout=(connect_s, read_s)) enforces both connection AND read independently.
+        today_str = now.strftime("%d-%m-%Y")
+        is_today = (resolved_start == today_str)
+        read_timeout = 12 if is_today else 7
 
         try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                raw_bytes = response.read()
-                try:
-                    raw_bytes = gzip.decompress(raw_bytes)
-                except Exception:
-                    pass
-                
-                payload = json.loads(raw_bytes.decode("utf-8"))
-                packets = payload.get("Data", [])
-                
-                # Sort packets chronologically ascending
-                packets.sort(key=lambda p: int(p.get("Epoch", 0)))
-                
-                _AWS_CACHE[cache_key] = {
-                    "expires_at": time.time() + CACHE_TTL_SECONDS,
-                    "data": packets
-                }
-                return packets
+            resp = _requests.get(
+                url,
+                headers={"User-Agent": "CowMonitoring-Backend/1.0"},
+                timeout=(3, read_timeout),  # (connect_timeout, read_timeout)
+                stream=False
+            )
+            resp.raise_for_status()
+            raw_bytes = resp.content
+            try:
+                raw_bytes = gzip.decompress(raw_bytes)
+            except Exception:
+                pass
+
+            payload = json.loads(raw_bytes.decode("utf-8"))
+            packets = payload.get("Data", [])
+
+            # Sort packets chronologically ascending
+            packets.sort(key=lambda p: int(p.get("Epoch", 0)))
+
+            # Cache past days for 24h — historical data never changes
+            ttl = CACHE_TTL_SECONDS if is_today else 86400
+            _AWS_CACHE[cache_key] = {
+                "expires_at": time.time() + ttl,
+                "data": packets
+            }
+            return packets
         except Exception as e:
-            logger.error(f"Failed to fetch data from AWS API for device {device_id}: {e}")
+            logger.warning(f"AWS API fetch for device {device_id} date {resolved_start}: {e}")
             if cached:
                 return cached["data"]
+            # Cache empty/error for past days to avoid repeated slow timeouts
+            if not is_today:
+                _AWS_CACHE[cache_key] = {
+                    "expires_at": time.time() + 86400,
+                    "data": []
+                }
             return []
 
     @classmethod
@@ -296,12 +290,21 @@ class AwsTelemetryService:
         return meta
 
     @classmethod
-    def get_live_dashboard(cls, device_id: str) -> dict:
+    def get_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
         """
         Builds the Live Diagnostics dashboard payload for an AWS device.
         Matches exact schema of get_cow_live_dashboard in cows.py.
+        Targets specific date for 24 hours (startdate=target&enddate=target).
         """
-        packets = cls.get_processed_packets(device_id)
+        now = datetime.now(timezone.utc)
+        target = target_date or now.strftime("%d-%m-%Y")
+        packets = cls.get_processed_packets(device_id, start_date=target, end_date=target)
+
+        # Fallback to yesterday's 24h window if today has no packets and no explicit target was forced
+        if not packets and not target_date:
+            yesterday_str = (now - timedelta(days=1)).strftime("%d-%m-%Y")
+            packets = cls.get_processed_packets(device_id, start_date=yesterday_str, end_date=yesterday_str)
+
         dev_meta = cls.get_device_metadata(device_id)
 
         if not packets:
@@ -467,191 +470,246 @@ class AwsTelemetryService:
     def get_7day_activity(cls, device_id: str) -> dict:
         """
         Builds the 7-day behavior distribution for an AWS device.
-        Matches exact schema of get_cow_7day_activity in cows.py.
+        Uses stale-while-revalidate: returns instantly from cache, refreshes in background.
+        First call returns skeleton immediately and triggers background computation.
+        Cache TTL: 30min (data doesn't change frequently within a day).
         """
-        now = datetime.now(timezone.utc)
-        start_date = (now - timedelta(days=7)).strftime("%d-%m-%Y")
-        end_date = now.strftime("%d-%m-%Y")
-        packets = cls.get_processed_packets(device_id, start_date=start_date, end_date=end_date)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # Last 7 calendar days up to the latest packet date
-        if packets:
-            reference_date = packets[-1]["timestamp"].date()
-        else:
-            reference_date = date.today()
+        cache_key = f"7day_{device_id}"
+        cached = _AWS_CACHE.get(cache_key)
+        now_ts = time.time()
 
-        date_range = [(reference_date - timedelta(days=i)) for i in range(6, -1, -1)]
+        # Always build date range for skeleton response
+        today = datetime.now(timezone.utc).date()
+        date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
+        day_labels = [d.strftime("%a") for d in date_range]
+        date_labels = [d.strftime("%Y-%m-%d") for d in date_range]
 
-        # Group packets by date
-        pkts_by_date = {d: [] for d in date_range}
-        for p in packets:
-            d = p["timestamp"].date()
-            if d in pkts_by_date:
-                pkts_by_date[d].append(p)
+        def _build_result(pkts_by_date: dict) -> dict:
+            """Build the full 7-day result from per-day packets dict."""
+            rum_list, lying_list, feed_list, act_list = [], [], [], []
+            monitored_list, health_score_list, estrus_index_list = [], [], []
 
-        days = []
-        dates = []
-        rum_list = []
-        lying_list = []
-        feed_list = []
-        act_list = []
-        monitored_list = []
-        health_score_list = []
-        estrus_index_list = []
+            for d in date_range:
+                day_pkts = pkts_by_date.get(d, [])
+                if day_pkts:
+                    tot = len(day_pkts)
+                    mon_hrs = round((tot * 8.0) / 3600.0, 1)
+                    c_rus = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "RUS")
+                    c_rel = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "REL")
+                    c_fep = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] in ["FEP", "FED", "GRZ"])
+                    c_mov = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "MOV")
+                    c_heat = sum(1 for p in day_pkts if p["ml_inference"]["heat_detection"]["in_heat"])
+                    r_hrs = round((c_rus * 8.0) / 3600.0, 1)
+                    l_hrs = round((c_rel * 8.0) / 3600.0, 1)
+                    f_hrs = round((c_fep * 8.0) / 3600.0, 1)
+                    m_hrs = round((c_mov * 8.0) / 3600.0, 1)
+                    h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
+                    e_idx = int((c_heat / tot) * 100) if tot > 0 else 0
+                    rum_list.append(r_hrs); lying_list.append(l_hrs)
+                    feed_list.append(f_hrs); act_list.append(m_hrs)
+                    monitored_list.append(mon_hrs)
+                    health_score_list.append(h_score)
+                    estrus_index_list.append(min(100, e_idx))
+                else:
+                    rum_list.append(0.0); lying_list.append(0.0)
+                    feed_list.append(0.0); act_list.append(0.0)
+                    monitored_list.append(0.0)
+                    health_score_list.append(0); estrus_index_list.append(0)
 
-        for d in date_range:
-            days.append(d.strftime("%a"))
-            dates.append(d.strftime("%Y-%m-%d"))
-            day_pkts = pkts_by_date.get(d, [])
+            days_with_data = sum(1 for m in monitored_list if m > 0)
+            tot_days = max(1, days_with_data)
+            return {
+                "cowId": f"aws-{device_id}", "device_id": str(device_id), "source": "aws_api",
+                "days": day_labels, "dates": date_labels,
+                "ruminationHours": rum_list, "lyingRestHours": lying_list,
+                "feedingHours": feed_list, "activeHours": act_list,
+                "monitoredHours": monitored_list, "healthScores": health_score_list,
+                "estrusIndices": estrus_index_list, "estrusAlerts": [],
+                "weeklyAverageHours": {
+                    "RUS": round(sum(rum_list) / tot_days, 2),
+                    "REL": round(sum(lying_list) / tot_days, 2),
+                    "FEP": round(sum(feed_list) / tot_days, 2),
+                    "MOV": round(sum(act_list) / tot_days, 2),
+                    "RES": 0.0, "DRN": 0.0
+                }
+            }
 
-            if day_pkts:
-                tot = len(day_pkts)
-                mon_hrs = round((tot * 8.0) / 3600.0, 1)
+        def _refresh_in_background():
+            """Background thread: fetch all 7 days and update cache."""
+            try:
+                def fetch_day(d: date) -> tuple:
+                    day_str = d.strftime("%d-%m-%Y")
+                    pkts = cls.get_processed_packets(device_id, start_date=day_str, end_date=day_str)
+                    return d, pkts
 
-                c_rus = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "RUS")
-                c_rel = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "REL")
-                c_fep = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] in ["FEP", "FED", "GRZ"])
-                c_mov = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "MOV")
-                c_heat = sum(1 for p in day_pkts if p["ml_inference"]["heat_detection"]["in_heat"])
+                pkts_by_date: dict = {}
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {executor.submit(fetch_day, d): d for d in date_range}
+                    for future in as_completed(futures):
+                        try:
+                            day, pkts = future.result()
+                            pkts_by_date[day] = pkts
+                        except Exception as e:
+                            d = futures[future]
+                            logger.warning(f"7day bg fetch failed for {d}: {e}")
+                            pkts_by_date[d] = []
 
-                r_hrs = round((c_rus * 8.0) / 3600.0, 1)
-                l_hrs = round((c_rel * 8.0) / 3600.0, 1)
-                f_hrs = round((c_fep * 8.0) / 3600.0, 1)
-                m_hrs = round((c_mov * 8.0) / 3600.0, 1)
+                result = _build_result(pkts_by_date)
+                _AWS_CACHE[cache_key] = {
+                    "expires_at": now_ts + 1800,  # 30min cache
+                    "data": result
+                }
+                logger.info(f"7-day activity cache updated for device {device_id}")
+            except Exception as e:
+                logger.error(f"7-day background refresh failed for {device_id}: {e}")
 
-                h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
-                e_idx = int((c_heat / tot) * 100) if tot > 0 else 0
+        # Cache HIT (fresh): return instantly
+        if cached and cached["expires_at"] > now_ts:
+            return cached["data"]
 
-                rum_list.append(r_hrs)
-                lying_list.append(l_hrs)
-                feed_list.append(f_hrs)
-                act_list.append(m_hrs)
-                monitored_list.append(mon_hrs)
-                health_score_list.append(h_score)
-                estrus_index_list.append(min(100, e_idx))
-            else:
-                rum_list.append(0.0)
-                lying_list.append(0.0)
-                feed_list.append(0.0)
-                act_list.append(0.0)
-                monitored_list.append(0.0)
-                health_score_list.append(0)
-                estrus_index_list.append(0)
+        # Cache HIT (stale): return stale data immediately + trigger background refresh
+        if cached and cached.get("data"):
+            import threading
+            t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"7DayRefresh-{device_id}")
+            t.start()
+            return cached["data"]  # Return stale instantly — UI will refetch later
 
-        tot_days = max(1, len(date_range))
-        weekly_avg = {
-            "RUS": sum(rum_list) / tot_days,
-            "REL": sum(lying_list) / tot_days,
-            "FEP": sum(feed_list) / tot_days,
-            "MOV": sum(act_list) / tot_days,
-            "RES": 0.0,
-            "DRN": 0.0
-        }
+        # Cache MISS (first ever call): trigger background refresh and return empty skeleton
+        import threading
+        t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"7DayRefresh-{device_id}")
+        t.start()
 
-        return {
-            "cowId": f"aws-{device_id}",
-            "device_id": str(device_id),
-            "source": "aws_api",
-            "days": days,
-            "dates": dates,
-            "ruminationHours": rum_list,
-            "lyingRestHours": lying_list,
-            "feedingHours": feed_list,
-            "activeHours": act_list,
-            "monitoredHours": monitored_list,
-            "healthScores": health_score_list,
-            "estrusIndices": estrus_index_list,
-            "estrusAlerts": [],
-            "weeklyAverageHours": weekly_avg
-        }
+        # Return empty skeleton immediately — frontend will show loading state
+        # and poll again once cache is populated
+        return _build_result({})
 
     @classmethod
     def get_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
         """
         Builds chronological activity transition logs for an AWS device.
-        Matches exact schema of api_get_cow_activity_log in main.py.
+        Uses stale-while-revalidate: returns instantly from cache, refreshes in background.
+        Cache TTL: 30min. First call returns empty while background fetches all 7 days.
         """
-        now = datetime.now(timezone.utc)
-        start_date = (now - timedelta(days=7)).strftime("%d-%m-%Y")
-        end_date = now.strftime("%d-%m-%Y")
-        packets = cls.get_processed_packets(device_id, start_date=start_date, end_date=end_date)
-        if not packets:
-            return {"success": True, "logs": [], "page": page, "limit": limit, "source": "aws_api"}
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        grouped_logs = []
-        current_group = None
+        cache_key = f"actlogs_{device_id}"
+        cached = _AWS_CACHE.get(cache_key)
+        now_ts = time.time()
 
-        for idx, p in enumerate(packets):
-            inf = p["ml_inference"]
-            act_code = inf["activity"]["code"]
-            conf = int(inf["activity"]["confidence"] * 100)
-            ts = p["timestamp"]
+        def _build_logs(all_packets: list) -> dict:
+            """Build grouped activity logs from sorted packets list."""
+            if not all_packets:
+                return {"success": True, "logs": [], "page": page, "limit": limit,
+                        "totalLogs": 0, "source": "aws_api"}
 
-            if current_group and current_group["activityCode"] == act_code:
-                current_group["endTime"] = ts.isoformat()
-                current_group["packetCount"] += 1
-                current_group["endPacketId"] = f"AWS-P{idx+1}"
-                current_group["confidenceSum"] += conf
-            else:
-                if current_group:
-                    grouped_logs.append(current_group)
+            grouped_logs = []
+            current_group = None
+            for idx, p in enumerate(all_packets):
+                inf = p["ml_inference"]
+                act_code = inf["activity"]["code"]
+                conf = int(inf["activity"]["confidence"] * 100)
+                ts = p["timestamp"]
+                if current_group and current_group["activityCode"] == act_code:
+                    current_group["endTime"] = ts.isoformat()
+                    current_group["packetCount"] += 1
+                    current_group["endPacketId"] = f"AWS-P{idx+1}"
+                    current_group["confidenceSum"] += conf
+                else:
+                    if current_group:
+                        grouped_logs.append(current_group)
+                    act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP["RES"])
+                    current_group = {
+                        "logId": f"aws-{device_id}-{idx+1}",
+                        "startTime": ts.isoformat(), "endTime": ts.isoformat(),
+                        "packetCount": 1, "activityCode": act_code,
+                        "activityName": act_info["name"], "color": act_info["color"],
+                        "category": act_info["category"], "confidenceSum": conf,
+                        "startPacketId": f"AWS-P{idx+1}", "endPacketId": f"AWS-P{idx+1}"
+                    }
+            if current_group:
+                grouped_logs.append(current_group)
 
-                act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP["RES"])
-                current_group = {
-                    "logId": f"aws-{device_id}-{idx+1}",
-                    "startTime": ts.isoformat(),
-                    "endTime": ts.isoformat(),
-                    "packetCount": 1,
-                    "activityCode": act_code,
-                    "activityName": act_info["name"],
-                    "color": act_info["color"],
-                    "category": act_info["category"],
-                    "confidenceSum": conf,
-                    "startPacketId": f"AWS-P{idx+1}",
-                    "endPacketId": f"AWS-P{idx+1}"
+            for g in grouped_logs:
+                start_ts = datetime.fromisoformat(g["startTime"])
+                end_ts = datetime.fromisoformat(g["endTime"])
+                duration_secs = max(8, int((end_ts - start_ts).total_seconds()) + 8)
+                if duration_secs < 60:
+                    g["durationDisplay"] = f"{duration_secs} secs"
+                elif duration_secs < 3600:
+                    g["durationDisplay"] = f"{round(duration_secs / 60)} mins"
+                else:
+                    hrs = duration_secs // 3600
+                    mins = (duration_secs % 3600) // 60
+                    g["durationDisplay"] = f"{hrs}h {mins}m" if mins > 0 else f"{hrs}h"
+                g["durationMinutes"] = max(1, round(duration_secs / 60))
+                g["confidencePercent"] = round(g["confidenceSum"] / g["packetCount"])
+                del g["packetCount"]
+                del g["confidenceSum"]
+
+            grouped_logs.reverse()  # Newest first
+            start_idx = (page - 1) * limit
+            return {
+                "success": True, "logs": grouped_logs[start_idx: start_idx + limit],
+                "page": page, "limit": limit,
+                "totalLogs": len(grouped_logs), "source": "aws_api"
+            }
+
+        def _refresh_in_background():
+            """Background: fetch all 7 days and update logs cache."""
+            try:
+                today = datetime.now(timezone.utc).date()
+                date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
+
+                def fetch_day(d: date) -> tuple:
+                    day_str = d.strftime("%d-%m-%Y")
+                    pkts = cls.get_processed_packets(device_id, start_date=day_str, end_date=day_str)
+                    return d, pkts
+
+                day_results: dict = {}
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {executor.submit(fetch_day, d): d for d in date_range}
+                    for future in as_completed(futures):
+                        try:
+                            d, pkts = future.result()
+                            day_results[d] = pkts
+                        except Exception as e:
+                            d = futures[future]
+                            logger.warning(f"actlogs bg fetch failed for {d}: {e}")
+                            day_results[d] = []
+
+                all_packets = []
+                for d in date_range:
+                    all_packets.extend(day_results.get(d, []))
+                all_packets.sort(key=lambda p: p["timestamp"])
+
+                result = _build_logs(all_packets)
+                _AWS_CACHE[cache_key] = {
+                    "expires_at": now_ts + 1800,
+                    "data": result
                 }
+                logger.info(f"Activity logs cache updated for device {device_id}: {result.get('totalLogs', 0)} log groups")
+            except Exception as e:
+                logger.error(f"Activity logs background refresh failed for {device_id}: {e}")
 
-        if current_group:
-            grouped_logs.append(current_group)
+        # Cache HIT (fresh): return instantly
+        if cached and cached["expires_at"] > now_ts:
+            return cached["data"]
 
-        # Reconstruct gapless durations backward
-        current_end_time = None
-        for g in reversed(grouped_logs):
-            duration_secs = g["packetCount"] * 8
-            if duration_secs < 60:
-                g["durationDisplay"] = f"{duration_secs} secs"
-            else:
-                g["durationDisplay"] = f"{round(duration_secs / 60)} mins"
+        # Cache HIT (stale): return immediately + trigger background refresh
+        if cached and cached.get("data"):
+            import threading
+            t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"LogsRefresh-{device_id}")
+            t.start()
+            return cached["data"]
 
-            duration_mins = max(1, round(duration_secs / 60))
-            g["durationMinutes"] = duration_mins
-
-            if current_end_time is None:
-                current_end_time = datetime.fromisoformat(g["endTime"])
-
-            g["endTime"] = current_end_time.isoformat()
-            start_time = current_end_time - timedelta(minutes=duration_mins)
-            g["startTime"] = start_time.isoformat()
-            current_end_time = start_time
-
-            g["confidencePercent"] = round(g["confidenceSum"] / g["packetCount"])
-            del g["packetCount"]
-            del g["confidenceSum"]
-
-        # Newest transitions first
-        grouped_logs.reverse()
-
-        start_idx = (page - 1) * limit
-        paged_logs = grouped_logs[start_idx : start_idx + limit]
-
-        return {
-            "success": True,
-            "logs": paged_logs,
-            "page": page,
-            "limit": limit,
-            "totalLogs": len(grouped_logs),
-            "source": "aws_api"
-        }
+        # Cache MISS: start background fetch, return empty immediately
+        import threading
+        t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"LogsRefresh-{device_id}")
+        t.start()
+        return {"success": True, "logs": [], "page": page, "limit": limit,
+                "totalLogs": 0, "source": "aws_api"}
 
     @classmethod
     def _fetch_single_herd_item(cls, dev_id: str) -> dict:

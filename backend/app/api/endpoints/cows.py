@@ -303,7 +303,7 @@ def resolve_db_cow(cow_id: str, db: Session):
 
 
 @router.get("/{cow_id}/live")
-def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
+def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Live dashboard: routes to AWS Telemetry Service if cow_id is an AWS device,
     otherwise uses the Render database logic.
@@ -311,7 +311,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     # Check if requested node is an AWS device
     aws_dev = resolve_aws_device_id(cow_id)
     if aws_dev:
-        return AwsTelemetryService.get_live_dashboard(aws_dev)
+        return AwsTelemetryService.get_live_dashboard(aws_dev, target_date=target_date)
 
     cow = resolve_db_cow(cow_id, db)
         
@@ -320,7 +320,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         clean_id = str(cow_id).strip().lower().replace("aws-", "")
         if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
             try:
-                return AwsTelemetryService.get_live_dashboard(clean_id)
+                return AwsTelemetryService.get_live_dashboard(clean_id, target_date=target_date)
             except Exception:
                 pass
 
@@ -332,7 +332,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     if not cow:
         # Final fallback to default AWS Device 8
         try:
-            return AwsTelemetryService.get_live_dashboard("8")
+            return AwsTelemetryService.get_live_dashboard("8", target_date=target_date)
         except Exception:
             pass
         raise HTTPException(status_code=404, detail="No cattle nodes registered in database or AWS.")
