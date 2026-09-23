@@ -156,7 +156,7 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
 def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
     """Activity log using pre-computed ML inferences or AWS API."""
     from app.services.aws_service import AwsTelemetryService
-    from app.api.endpoints.cows import resolve_aws_device_id
+    from app.api.endpoints.cows import resolve_aws_device_id, resolve_db_cow
     
     aws_dev = resolve_aws_device_id(cow_id)
     if aws_dev:
@@ -166,15 +166,7 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     from app.models.datalogger import DataloggerHeader, MLInference
     from app.models.ui_parameter import ActivityConfig
     
-    cow = None
-    try:
-        if str(cow_id).isdigit():
-            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
-        else:
-            cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
-    except Exception:
-        pass
-
+    cow = resolve_db_cow(cow_id, db)
     if not cow:
         try:
             return AwsTelemetryService.get_activity_logs(str(cow_id), page=page, limit=limit)

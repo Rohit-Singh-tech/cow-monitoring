@@ -222,6 +222,41 @@ def get_herd_overview(db: Session = Depends(get_db)):
     return result
 
 
+def resolve_db_cow(cow_id: str, db: Session):
+    """
+    Resolves a cow in the database by device_id or primary key id.
+    Returns TagRegistry object if found, or a proxy object if headers exist for device_id.
+    """
+    cow = None
+    try:
+        # First match by device_id (e.g. '17', 'COW-BLE-001')
+        cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+        # Second match by primary key id (e.g. 1)
+        if not cow and str(cow_id).isdigit():
+            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+    except Exception as e:
+        logger.warning(f"Error querying TagRegistry for {cow_id}: {e}")
+    
+    if not cow:
+        # Check if datalogger_headers exist for this device_id
+        try:
+            has_hdr = db.query(DataloggerHeader.id).filter(DataloggerHeader.device_id == str(cow_id)).first()
+            if has_hdr:
+                class UnregisteredCow:
+                    id = int(cow_id) if str(cow_id).isdigit() else 999
+                    device_id = str(cow_id)
+                    name = f"Node #{cow_id}"
+                    breed = None
+                    location = None
+                    weight = None
+                    notes = None
+                return UnregisteredCow()
+        except Exception:
+            pass
+
+    return cow
+
+
 @router.get("/{cow_id}/live")
 def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     """
@@ -233,15 +268,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     if aws_dev:
         return AwsTelemetryService.get_live_dashboard(aws_dev)
 
-    cow = None
-    try:
-        if str(cow_id).isdigit():
-            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
-            
-        if not cow:
-            cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
-    except Exception as e:
-        logger.warning(f"Database lookup error for cow {cow_id}: {e}")
+    cow = resolve_db_cow(cow_id, db)
         
     if not cow:
         # Check if cow_id can be resolved via AWS directly
@@ -480,15 +507,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     if aws_dev:
         return AwsTelemetryService.get_7day_activity(aws_dev)
 
-    cow = None
-    try:
-        if str(cow_id).isdigit():
-            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
-        else:
-            cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
-    except Exception as e:
-        logger.warning(f"DB lookup error in 7day for cow {cow_id}: {e}")
-
+    cow = resolve_db_cow(cow_id, db)
     if not cow:
         try:
             return AwsTelemetryService.get_7day_activity(str(cow_id))

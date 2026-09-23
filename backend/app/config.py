@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Database Settings
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
-        "postgresql://ble_sense_iuth_user:Ow08irQzjlbfwYSfisDcEq6fejV77E3J@dpg-d9hei4flk1mc73dqus60-a.ohio-postgres.render.com/ble_sense_iuth"
+        "postgresql://ble_sense_p1fq_user:U99Ev57Lm8lijJSo80lznjCDxp0KjHo8@dpg-dapn2h8u01pc73d894bg-a.ohio-postgres.render.com/ble_sense_p1fq"
     )
     
     # CORS Settings
