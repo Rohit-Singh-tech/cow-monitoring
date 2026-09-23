@@ -1,4 +1,9 @@
-import requests as _requests
+try:
+    import requests as _requests
+except ImportError:
+    _requests = None
+import urllib.request
+import urllib.error
 import gzip
 import json
 import math
@@ -107,14 +112,22 @@ class AwsTelemetryService:
         read_timeout = 12 if is_today else 7
 
         try:
-            resp = _requests.get(
-                url,
-                headers={"User-Agent": "CowMonitoring-Backend/1.0"},
-                timeout=(3, read_timeout),  # (connect_timeout, read_timeout)
-                stream=False
-            )
-            resp.raise_for_status()
-            raw_bytes = resp.content
+            if _requests is not None:
+                resp = _requests.get(
+                    url,
+                    headers={"User-Agent": "CowMonitoring-Backend/1.0"},
+                    timeout=(3, read_timeout),  # (connect_timeout, read_timeout)
+                    stream=False
+                )
+                resp.raise_for_status()
+                raw_bytes = resp.content
+            else:
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "CowMonitoring-Backend/1.0"}
+                )
+                with urllib.request.urlopen(req, timeout=read_timeout) as resp:
+                    raw_bytes = resp.read()
             try:
                 raw_bytes = gzip.decompress(raw_bytes)
             except Exception:
