@@ -236,7 +236,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
                   <><i className="fa-solid fa-database" style={{ marginRight: '0.35rem', color: '#38BDF8' }}></i>Gatewayless</>
                 )}
               </span>
-              {currentData.breed && <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>}
+              {currentData.breed && currentData.breed !== 'CowNeck Collar Cow' && (
+                <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>
+              )}
               <span className={`health-badge ${healthDecision}`}>
                 {currentData.isStale ? 'NO DATA' : String(healthDecision).replace('_', ' ')}
               </span>

@@ -29,6 +29,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
   const { activities } = useConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [dateScope, setDateScope] = useState('24H'); // '24H' (Today) or 'ALL'
 
   // Show loading state when fetching (especially for AWS devices which take longer)
   if (isLoading && !data7Day) {
@@ -146,35 +147,78 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
         borderColor: 'rgba(52, 211, 153, 0.5)',
         borderWidth: 1,
         titleFont: { family: 'Inter', size: 12, weight: '800' },
-        bodyFont: { family: 'JetBrains Mono', size: 11 }
+        bodyFont: { family: 'JetBrains Mono', size: 11 },
+        callbacks: {
+          label: function(context) {
+            const val = context.parsed.y !== undefined ? context.parsed.y : context.raw;
+            if (val === 0 || val === null || val === undefined) return null;
+            const totalMins = Math.round(val * 60);
+            const hrs = Math.floor(totalMins / 60);
+            const remMins = totalMins % 60;
+            const durStr = hrs > 0 ? (remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`) : `${remMins}m`;
+            return ` ${context.dataset.label}: ${val} hrs (${durStr})`;
+          }
+        }
       }
     }
   };
 
-  // Health Score & Estrus Heat Index Line Chart Data
+  const formatDateTime = (isoStr) => {
+    if (!isoStr) return '—';
+    try {
+      const d = new Date(isoStr);
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return `${dateStr}, ${timeStr}`;
+    } catch (e) {
+      return isoStr;
+    }
+  };
+
+  const formatShortDateTime = (isoStr) => {
+    if (!isoStr) return '—';
+    try {
+      const d = new Date(isoStr);
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return `${dateStr}, ${timeStr}`;
+    } catch (e) {
+      return isoStr;
+    }
+  };
+
+  // Health Score & Estrus Heat Index Line Chart Data (Data-driven, no fake fallbacks)
   const healthLineData = {
-    labels: history.map(d => d.day),
+    labels: labels,
     datasets: [
       {
         label: 'Health Score %',
-        data: history.map(d => d.healthScore || 92),
+        data: history.map(d => {
+          const hasData = (d.REL || 0) + (d.RUS || 0) + (d.FEP || 0) + (d.MOV || 0) + (d.RES || 0) + (d.DRN || 0) > 0 || (d.monitoredHours > 0);
+          return hasData ? (d.healthScore !== undefined ? d.healthScore : null) : null;
+        }),
         borderColor: '#10B981',
         backgroundColor: 'rgba(16, 185, 129, 0.15)',
         borderWidth: 3,
         tension: 0.35,
         fill: true,
+        spanGaps: false,
         pointBackgroundColor: '#10B981',
         pointRadius: 4
       },
       {
         label: 'Estrus Heat Index %',
-        data: history.map(d => d.estrusIndex || 12),
+        data: history.map(d => {
+          const hasData = (d.REL || 0) + (d.RUS || 0) + (d.FEP || 0) + (d.MOV || 0) + (d.RES || 0) + (d.DRN || 0) > 0 || (d.monitoredHours > 0);
+          return hasData ? (d.estrusIndex !== undefined ? d.estrusIndex : null) : null;
+        }),
         borderColor: '#F59E0B',
         backgroundColor: 'rgba(245, 158, 11, 0.1)',
         borderWidth: 2,
         borderDash: [4, 4],
         tension: 0.35,
         fill: false,
+        spanGaps: false,
         pointBackgroundColor: '#F59E0B',
         pointRadius: 3
       }
@@ -244,7 +288,20 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
   // Filter Logs (now pre-grouped by backend)
   const activeLogs = logs || [];
 
-  const filteredLogs = activeLogs.filter(log => {
+  // Determine latest date in the log set to scope to Today (24 Hours)
+  const latestDateStr = activeLogs.length > 0
+    ? new Date(activeLogs[0].startTime).toISOString().slice(0, 10)
+    : null;
+
+  const scopeFilteredLogs = activeLogs.filter(log => {
+    if (dateScope === '24H' && latestDateStr) {
+      const logDate = new Date(log.startTime).toISOString().slice(0, 10);
+      return logDate === latestDateStr;
+    }
+    return true;
+  });
+
+  const filteredLogs = scopeFilteredLogs.filter(log => {
     const matchesSearch =
       log.activityName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       log.activityCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -297,6 +354,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
               <i className="fa-solid fa-list-check" style={{ color: 'var(--accent-amber)' }}></i>
               7-DAY AVERAGE ACTIVITY DISTRIBUTION
             </div>
+            <div className="meta-chip" style={{ fontSize: '0.72rem' }}>7-Day Daily Average (Total / 7)</div>
           </div>
           <div className="card-body">
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
@@ -341,17 +399,54 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
         <div className="card-header-box" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
           <div className="card-title">
             <i className="fa-solid fa-clock-rotate-left" style={{ color: 'var(--accent-amber)' }}></i>
-            RECORDED ACTIVITY TRANSITION LOGS (LAST 24 HOURS)
+            {dateScope === '24H' ? "TODAY'S 24-HOUR ACTIVITY TRANSITION LOGS" : "7-DAY ACTIVITY TRANSITION LOGS"}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+            <div className="tab-pill-group" style={{ display: 'inline-flex', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)', padding: '2px' }}>
+              <button
+                type="button"
+                className={`tab-pill-btn ${dateScope === '24H' ? 'active' : ''}`}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  background: dateScope === '24H' ? 'var(--accent-emerald)' : 'transparent',
+                  color: dateScope === '24H' ? '#FFFFFF' : 'var(--text-muted)'
+                }}
+                onClick={() => setDateScope('24H')}
+              >
+                Today (24 Hours)
+              </button>
+              <button
+                type="button"
+                className={`tab-pill-btn ${dateScope === 'ALL' ? 'active' : ''}`}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  background: dateScope === 'ALL' ? 'var(--accent-emerald)' : 'transparent',
+                  color: dateScope === 'ALL' ? '#FFFFFF' : 'var(--text-muted)'
+                }}
+                onClick={() => setDateScope('ALL')}
+              >
+                All 7 Days
+              </button>
+            </div>
+
             <input
               type="text"
               placeholder="Search logs..."
               className="search-input-box"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              style={{ width: '150px' }}
+              style={{ width: '130px' }}
             />
             <select
               className="search-input-box"
@@ -396,10 +491,10 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
                         {data7Day?.device_id ? `Node-${data7Day.device_id}` : `Node-${cowId}`}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
-                        {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {formatDateTime(log.startTime)}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 600 }}>
-                        {new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {formatDateTime(log.endTime)}
                       </td>
                       <td><strong style={{ color: 'var(--text-primary)' }}>{log.durationDisplay || `${log.durationMinutes} mins`}</strong></td>
                       <td>
@@ -450,7 +545,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
                   <div className="log-card-body">
                     <div className="log-time-row">
                       <span className="log-time">
-                        <i className="fa-regular fa-clock"></i> {new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} → {new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <i className="fa-regular fa-clock"></i> {formatShortDateTime(log.startTime)} → {formatShortDateTime(log.endTime)}
                       </span>
                       <span className="meta-chip">{log.category}</span>
                     </div>

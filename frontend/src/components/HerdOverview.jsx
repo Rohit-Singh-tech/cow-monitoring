@@ -199,7 +199,7 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
                         <div className="cow-card-name" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                           <span>#{cow.device_id} - {cow.name}</span>
                         </div>
-                        <div className="cow-card-tag">TAG: <strong style={{ color: 'var(--text-primary)' }}>{cow.tagNumber}</strong>{cow.breed ? ` • ${cow.breed}` : ''}</div>
+                        <div className="cow-card-tag">TAG: <strong style={{ color: 'var(--text-primary)' }}>{cow.tagNumber}</strong>{cow.breed && cow.breed !== 'CowNeck Collar Cow' ? ` • ${cow.breed}` : ''}</div>
                       </div>
                     </div>
 

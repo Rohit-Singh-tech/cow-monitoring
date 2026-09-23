@@ -36,6 +36,52 @@ ACTIVITY_MAP = {
     "ETC": {"code": "ETC", "name": "Other Activity", "color": "#94a3b8", "icon": "fa-ellipsis", "category": "Other"}
 }
 
+import os
+
+# AWS CowNeck Collar transmits 1 telemetry packet per 60 seconds (1 minute).
+# 1 packet represents 60.0 seconds of livestock behavioral observation.
+AWS_PACKET_INTERVAL_SECONDS = 60.0
+
+# Persistent Last-Known-Good caches so AWS data NEVER vanishes on timeouts or restarts
+SNAPSHOT_FILE = os.path.join(os.path.dirname(__file__), ".aws_telemetry_snapshot.json")
+_LAST_VALID_DASHBOARD: Dict[str, Any] = {}
+_LAST_VALID_7DAY: Dict[str, Any] = {}
+_LAST_VALID_LOGS: Dict[str, Any] = {}
+
+def _save_snapshot():
+    try:
+        data = {
+            "dashboard": _LAST_VALID_DASHBOARD,
+            "seven_day": _LAST_VALID_7DAY,
+            "logs": _LAST_VALID_LOGS
+        }
+        with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.warning(f"Error saving AWS telemetry snapshot: {e}")
+
+def _load_snapshot():
+    global _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _AWS_CACHE
+    if not os.path.exists(SNAPSHOT_FILE):
+        return
+    try:
+        with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _LAST_VALID_DASHBOARD.update(data.get("dashboard", {}))
+            _LAST_VALID_7DAY.update(data.get("seven_day", {}))
+            _LAST_VALID_LOGS.update(data.get("logs", {}))
+            now = time.time()
+            # Stored snapshot data serves as instant stale fallback while background threads revalidate
+            for dev_id, d in _LAST_VALID_7DAY.items():
+                _AWS_CACHE[f"7day_{dev_id}"] = {"expires_at": now, "data": d}
+            for dev_id, l in _LAST_VALID_LOGS.items():
+                _AWS_CACHE[f"actlogs_{dev_id}"] = {"expires_at": now, "data": l}
+            for dev_id, dash in _LAST_VALID_DASHBOARD.items():
+                _AWS_CACHE[f"live_{dev_id}_{dash.get('target', '')}"] = {"expires_at": now, "data": dash}
+        logger.info(f"Loaded persistent AWS telemetry snapshot for {len(_LAST_VALID_DASHBOARD)} devices.")
+    except Exception as e:
+        logger.warning(f"Error loading AWS telemetry snapshot: {e}")
+
 # In-memory caches for high-speed API performance
 _AWS_CACHE: Dict[str, Dict[str, Any]] = {}
 _HERD_ITEMS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": []}
@@ -45,6 +91,9 @@ _HERD_IS_REFRESHING = False
 _REFRESH_THREAD_LOCK = threading.Lock()
 _TAGS_LOADED_AT = 0.0
 CACHE_TTL_SECONDS = 300
+
+# Load persistent snapshot immediately on module load
+_load_snapshot()
 
 
 def _parse_timestamp(pkt: dict) -> datetime:
@@ -97,6 +146,25 @@ class AwsTelemetryService:
             today_str = now.strftime("%d-%m-%Y")
             resolved_start = today_str
             resolved_end = today_str
+
+        # AWS Lambda CowNeck_API_Function requires startdate == enddate (single day).
+        # Multi-day ranges throw HTTP 500. Automatically fetch each day individually and combine.
+        if resolved_start != resolved_end:
+            try:
+                s_dt = datetime.strptime(resolved_start, "%d-%m-%Y").date()
+                e_dt = datetime.strptime(resolved_end, "%d-%m-%Y").date()
+                if s_dt > e_dt:
+                    s_dt, e_dt = e_dt, s_dt
+                combined = []
+                cur = s_dt
+                while cur <= e_dt:
+                    d_str = cur.strftime("%d-%m-%Y")
+                    day_pkts = AwsTelemetryService.fetch_aws_raw(device_id, start_date=d_str, end_date=d_str)
+                    combined.extend(day_pkts)
+                    cur += timedelta(days=1)
+                return combined
+            except Exception as e:
+                logger.warning(f"Error expanding multi-day range {resolved_start}..{resolved_end}: {e}")
 
         cache_key = f"raw_{device_id}_{resolved_start}_{resolved_end}"
         cached = _AWS_CACHE.get(cache_key)
@@ -215,14 +283,28 @@ class AwsTelemetryService:
 
     @classmethod
     def clear_cache(cls):
-        """Clears all caches for immediate dynamic UI updates."""
-        global _AWS_CACHE, _HERD_ITEMS_CACHE, _METADATA_CACHE, _ML_PREDICTION_CACHE, _TAGS_LOADED_AT
-        _AWS_CACHE.clear()
+        """Clears metadata and herd caches for tag updates without wiping telemetry."""
+        global _HERD_ITEMS_CACHE, _METADATA_CACHE, _TAGS_LOADED_AT
         _HERD_ITEMS_CACHE = {"expires_at": 0.0, "data": []}
         _METADATA_CACHE.clear()
-        _ML_PREDICTION_CACHE.clear()
         _TAGS_LOADED_AT = 0.0
-        logger.info("Cleared AWS service caches.")
+        logger.info("Cleared AWS metadata & herd caches.")
+
+    @classmethod
+    def clear_all_telemetry_cache(cls):
+        """Forces immediate wipe of telemetry caches and snapshots for fresh calculation."""
+        global _AWS_CACHE, _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _HERD_ITEMS_CACHE
+        _AWS_CACHE.clear()
+        _LAST_VALID_DASHBOARD.clear()
+        _LAST_VALID_7DAY.clear()
+        _LAST_VALID_LOGS.clear()
+        _HERD_ITEMS_CACHE = {"expires_at": 0.0, "data": []}
+        if os.path.exists(SNAPSHOT_FILE):
+            try:
+                os.remove(SNAPSHOT_FILE)
+            except Exception:
+                pass
+        logger.info("Cleared all AWS telemetry caches and removed snapshot file.")
 
     @classmethod
     def load_all_tag_metadata(cls):
@@ -245,7 +327,7 @@ class AwsTelemetryService:
                     tag_no = f"AWS {clean_id}"
                     meta = {
                         "name": tag.name or f"AWS {clean_id}",
-                        "breed": tag.breed or "CowNeck Collar Cow",
+                        "breed": tag.breed or None,
                         "location": tag.location or "Paddock AWS",
                         "weight": weight_val,
                         "notes": tag.notes or "Registered in Tag Registry",
@@ -263,7 +345,7 @@ class AwsTelemetryService:
             if clean_id not in _METADATA_CACHE:
                 meta = {
                     "name": f"AWS {clean_id}",
-                    "breed": "CowNeck Collar Cow",
+                    "breed": None,
                     "location": "Paddock AWS",
                     "weight": "480 kg",
                     "notes": "AWS Collar Node",
@@ -292,7 +374,7 @@ class AwsTelemetryService:
 
         meta = {
             "name": f"AWS {clean_id}",
-            "breed": "CowNeck Collar Cow",
+            "breed": None,
             "location": "Paddock AWS",
             "weight": "480 kg",
             "notes": "AWS Collar Node",
@@ -327,6 +409,14 @@ class AwsTelemetryService:
         dev_meta = cls.get_device_metadata(device_id)
 
         if not packets:
+            dev_key = str(device_id).strip()
+            # If we have valid prior data for this device, return it with isStale=True (NEVER vanish!)
+            if dev_key in _LAST_VALID_DASHBOARD:
+                last_dash = dict(_LAST_VALID_DASHBOARD[dev_key])
+                last_dash["isStale"] = True
+                _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": last_dash}
+                return last_dash
+
             now = datetime.now(timezone.utc)
             empty_res = {
                 "cowId": f"aws-{device_id}",
@@ -386,7 +476,7 @@ class AwsTelemetryService:
             today_packets = packets
 
         total_pkts = len(today_packets)
-        monitored_hours = round((total_pkts * 8.0) / 3600.0, 1)
+        monitored_hours = round((total_pkts * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
 
         counts = {"RUS": 0, "REL": 0, "FEP": 0, "MOV": 0, "RES": 0, "HEAT": 0}
         for p in today_packets:
@@ -406,10 +496,10 @@ class AwsTelemetryService:
             if inf["heat_detection"]["in_heat"]:
                 counts["HEAT"] += 1
 
-        rum_hrs = round((counts["RUS"] * 8.0) / 3600.0, 1)
-        lying_hrs = round((counts["REL"] * 8.0) / 3600.0, 1)
-        feed_hrs = round((counts["FEP"] * 8.0) / 3600.0, 1)
-        move_hrs = round((counts["MOV"] * 8.0) / 3600.0, 1)
+        rum_hrs = round((counts["RUS"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+        lying_hrs = round((counts["REL"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+        feed_hrs = round((counts["FEP"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+        move_hrs = round((counts["MOV"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
 
         latest_ml = latest["ml_inference"]
         act_code = latest_ml["activity"]["code"]
@@ -486,7 +576,9 @@ class AwsTelemetryService:
             },
             "ml_inference": latest_ml
         }
-        _AWS_CACHE[cache_key] = {"expires_at": time.time() + 30.0, "data": live_payload}
+        _LAST_VALID_DASHBOARD[str(device_id).strip()] = live_payload
+        _save_snapshot()
+        _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": live_payload}
         return live_payload
 
     @classmethod
@@ -518,16 +610,16 @@ class AwsTelemetryService:
                 day_pkts = pkts_by_date.get(d, [])
                 if day_pkts:
                     tot = len(day_pkts)
-                    mon_hrs = round((tot * 8.0) / 3600.0, 1)
+                    mon_hrs = round((tot * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
                     c_rus = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "RUS")
                     c_rel = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "REL")
                     c_fep = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] in ["FEP", "FED", "GRZ"])
                     c_mov = sum(1 for p in day_pkts if p["ml_inference"]["activity"]["code"] == "MOV")
                     c_heat = sum(1 for p in day_pkts if p["ml_inference"]["heat_detection"]["in_heat"])
-                    r_hrs = round((c_rus * 8.0) / 3600.0, 1)
-                    l_hrs = round((c_rel * 8.0) / 3600.0, 1)
-                    f_hrs = round((c_fep * 8.0) / 3600.0, 1)
-                    m_hrs = round((c_mov * 8.0) / 3600.0, 1)
+                    r_hrs = round((c_rus * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+                    l_hrs = round((c_rel * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+                    f_hrs = round((c_fep * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+                    m_hrs = round((c_mov * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
                     h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
                     e_idx = int((c_heat / tot) * 100) if tot > 0 else 0
                     rum_list.append(r_hrs); lying_list.append(l_hrs)
@@ -541,8 +633,12 @@ class AwsTelemetryService:
                     monitored_list.append(0.0)
                     health_score_list.append(0); estrus_index_list.append(0)
 
-            days_with_data = sum(1 for m in monitored_list if m > 0)
-            tot_days = max(1, days_with_data)
+            # Calculate true 7-day average per day across the 7-day monitoring window (divided by 7)
+            rus_total = sum(rum_list)
+            rel_total = sum(lying_list)
+            fep_total = sum(feed_list)
+            mov_total = sum(act_list)
+
             return {
                 "cowId": f"aws-{device_id}", "device_id": str(device_id), "source": "aws_api",
                 "days": day_labels, "dates": date_labels,
@@ -551,10 +647,10 @@ class AwsTelemetryService:
                 "monitoredHours": monitored_list, "healthScores": health_score_list,
                 "estrusIndices": estrus_index_list, "estrusAlerts": [],
                 "weeklyAverageHours": {
-                    "RUS": round(sum(rum_list) / tot_days, 2),
-                    "REL": round(sum(lying_list) / tot_days, 2),
-                    "FEP": round(sum(feed_list) / tot_days, 2),
-                    "MOV": round(sum(act_list) / tot_days, 2),
+                    "RUS": round(rus_total / 7.0, 4),
+                    "REL": round(rel_total / 7.0, 4),
+                    "FEP": round(fep_total / 7.0, 4),
+                    "MOV": round(mov_total / 7.0, 4),
                     "RES": 0.0, "DRN": 0.0
                 }
             }
@@ -580,13 +676,20 @@ class AwsTelemetryService:
                             pkts_by_date[d] = []
 
                 result = _build_result(pkts_by_date)
-                _AWS_CACHE[cache_key] = {
-                    "expires_at": now_ts + 1800,  # 30min cache
-                    "data": result
-                }
-                logger.info(f"7-day activity cache updated for device {device_id}")
+                dev_key = str(device_id).strip()
+                has_data = any(m > 0 for m in result.get("monitoredHours", []))
+                if has_data or dev_key not in _LAST_VALID_7DAY:
+                    _LAST_VALID_7DAY[dev_key] = result
+                    _AWS_CACHE[cache_key] = {
+                        "expires_at": time.time() + 1800,  # 30min cache
+                        "data": result
+                    }
+                    _save_snapshot()
+                    logger.info(f"7-day activity cache updated for device {device_id}")
             except Exception as e:
                 logger.error(f"7-day background refresh failed for {device_id}: {e}")
+
+        dev_key = str(device_id).strip()
 
         # Cache HIT (fresh): return instantly
         if cached and cached["expires_at"] > now_ts:
@@ -599,7 +702,14 @@ class AwsTelemetryService:
             t.start()
             return cached["data"]  # Return stale instantly — UI will refetch later
 
-        # Cache MISS (first ever call): trigger background refresh and return empty skeleton
+        # If we have persistent last-known-good 7-day data: return it and refresh in background
+        if dev_key in _LAST_VALID_7DAY:
+            import threading
+            t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"7DayRefresh-{device_id}")
+            t.start()
+            return _LAST_VALID_7DAY[dev_key]
+
+        # Cache MISS (first ever call with no prior data): trigger background refresh and return skeleton
         import threading
         t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"7DayRefresh-{device_id}")
         t.start()
@@ -629,12 +739,16 @@ class AwsTelemetryService:
 
             grouped_logs = []
             current_group = None
+            last_ts = None
             for idx, p in enumerate(all_packets):
                 inf = p["ml_inference"]
                 act_code = inf["activity"]["code"]
                 conf = int(inf["activity"]["confidence"] * 100)
                 ts = p["timestamp"]
-                if current_group and current_group["activityCode"] == act_code:
+                # If packets are more than 120s apart, break into separate activity sessions
+                is_gap = last_ts and (ts - last_ts).total_seconds() > 120
+
+                if current_group and current_group["activityCode"] == act_code and not is_gap:
                     current_group["endTime"] = ts.isoformat()
                     current_group["packetCount"] += 1
                     current_group["endPacketId"] = f"AWS-P{idx+1}"
@@ -651,23 +765,30 @@ class AwsTelemetryService:
                         "category": act_info["category"], "confidenceSum": conf,
                         "startPacketId": f"AWS-P{idx+1}", "endPacketId": f"AWS-P{idx+1}"
                     }
+                last_ts = ts
             if current_group:
                 grouped_logs.append(current_group)
 
             for g in grouped_logs:
                 start_ts = datetime.fromisoformat(g["startTime"])
                 end_ts = datetime.fromisoformat(g["endTime"])
-                duration_secs = max(8, int((end_ts - start_ts).total_seconds()) + 8)
+                # Each AWS collar packet represents a 60-second observation window.
+                # For a contiguous burst of N packets, duration is N * 60 seconds.
+                pkt_count = g.get("packetCount", 1)
+                duration_secs = max(60, pkt_count * 60)
                 if duration_secs < 60:
                     g["durationDisplay"] = f"{duration_secs} secs"
                 elif duration_secs < 3600:
-                    g["durationDisplay"] = f"{round(duration_secs / 60)} mins"
+                    mins = duration_secs // 60
+                    secs = duration_secs % 60
+                    g["durationDisplay"] = f"{mins}m {secs}s" if secs > 0 else (f"{mins} mins" if mins > 1 else "1 min")
                 else:
                     hrs = duration_secs // 3600
                     mins = (duration_secs % 3600) // 60
+                    secs = duration_secs % 60
                     g["durationDisplay"] = f"{hrs}h {mins}m" if mins > 0 else f"{hrs}h"
                 g["durationMinutes"] = max(1, round(duration_secs / 60))
-                g["confidencePercent"] = round(g["confidenceSum"] / g["packetCount"])
+                g["confidencePercent"] = round(g["confidenceSum"] / pkt_count)
                 del g["packetCount"]
                 del g["confidenceSum"]
 
@@ -708,13 +829,19 @@ class AwsTelemetryService:
                 all_packets.sort(key=lambda p: p["timestamp"])
 
                 result = _build_logs(all_packets)
-                _AWS_CACHE[cache_key] = {
-                    "expires_at": now_ts + 1800,
-                    "data": result
-                }
-                logger.info(f"Activity logs cache updated for device {device_id}: {result.get('totalLogs', 0)} log groups")
+                dev_key = str(device_id).strip()
+                if result.get("totalLogs", 0) > 0 or dev_key not in _LAST_VALID_LOGS:
+                    _LAST_VALID_LOGS[dev_key] = result
+                    _AWS_CACHE[cache_key] = {
+                        "expires_at": time.time() + 1800,
+                        "data": result
+                    }
+                    _save_snapshot()
+                    logger.info(f"Activity logs cache updated for device {device_id}: {result.get('totalLogs', 0)} log groups")
             except Exception as e:
                 logger.error(f"Activity logs background refresh failed for {device_id}: {e}")
+
+        dev_key = str(device_id).strip()
 
         # Cache HIT (fresh): return instantly
         if cached and cached["expires_at"] > now_ts:
@@ -727,7 +854,14 @@ class AwsTelemetryService:
             t.start()
             return cached["data"]
 
-        # Cache MISS: start background fetch, return empty immediately
+        # If we have persistent last-known-good logs: return them and refresh in background
+        if dev_key in _LAST_VALID_LOGS:
+            import threading
+            t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"LogsRefresh-{device_id}")
+            t.start()
+            return _LAST_VALID_LOGS[dev_key]
+
+        # Cache MISS with no prior data: start background fetch, return empty immediately
         import threading
         t = threading.Thread(target=_refresh_in_background, daemon=True, name=f"LogsRefresh-{device_id}")
         t.start()
@@ -735,33 +869,38 @@ class AwsTelemetryService:
                 "totalLogs": 0, "source": "aws_api"}
 
     @classmethod
+    def _build_device_overview(cls, dash: dict) -> dict:
+        h = dash.get("healthStatus", {})
+        act = dash.get("currentActivity", {})
+        dev_id = str(dash.get("device_id", "")).strip()
+        return {
+            "id": f"aws-{dev_id}",
+            "device_id": dev_id,
+            "source": "aws_api",
+            "tagNumber": dash.get("tagNumber") or f"AWS {dev_id}",
+            "name": dash.get("cowName") or f"AWS {dev_id}",
+            "breed": dash.get("breed"),
+            "location": dash.get("location") or "Paddock AWS",
+            "weight": dash.get("weight") or "480 kg",
+            "healthStatus": h.get("health_risk_decision", "NORMAL"),
+            "health_risk_decision": h.get("health_risk_decision", "NORMAL"),
+            "currentActivity": act.get("code", "RES"),
+            "activityName": act.get("name", "Standing Rest"),
+            "ruminationHoursToday": h.get("ruminationHoursToday", 0.0),
+            "lyingHoursToday": h.get("lyingHoursToday", 0.0),
+            "feedingHoursToday": h.get("feedingHoursToday", 0.0),
+            "movingHoursToday": h.get("movingHoursToday", 0.0),
+            "estrusProbability": h.get("estrusProbabilityPercent", 0),
+            "lastSeen": dash.get("liveTelemetry", {}).get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "isStale": dash.get("isStale", False),
+            "monitoredHoursToday": h.get("monitoredHoursToday", 0.0)
+        }
+
+    @classmethod
     def _fetch_single_herd_item(cls, dev_id: str) -> dict:
         dev_str = str(dev_id).strip()
         dash = cls.get_live_dashboard(dev_str)
-        h = dash["healthStatus"]
-        act = dash["currentActivity"]
-        return {
-            "id": f"aws-{dev_str}",
-            "device_id": dev_str,
-            "source": "aws_api",
-            "tagNumber": dash.get("tagNumber") or f"AWS {dev_str}",
-            "name": dash["cowName"],
-            "breed": dash["breed"],
-            "location": dash["location"],
-            "weight": dash["weight"],
-            "healthStatus": h["health_risk_decision"],
-            "health_risk_decision": h["health_risk_decision"],
-            "currentActivity": act["code"],
-            "activityName": act["name"],
-            "ruminationHoursToday": h["ruminationHoursToday"],
-            "lyingHoursToday": h["lyingHoursToday"],
-            "feedingHoursToday": h["feedingHoursToday"],
-            "movingHoursToday": h["movingHoursToday"],
-            "estrusProbability": h["estrusProbabilityPercent"],
-            "lastSeen": dash["liveTelemetry"]["timestamp"],
-            "isStale": dash["isStale"],
-            "monitoredHoursToday": h["monitoredHoursToday"]
-        }
+        return cls._build_device_overview(dash)
 
     @classmethod
     def _build_fallback_herd_items(cls, device_ids: List[str] = None) -> List[dict]:
@@ -777,10 +916,19 @@ class AwsTelemetryService:
         for dev_id in device_ids:
             dev_str = str(dev_id).strip()
             clean_id = dev_str.lower().replace("aws-", "")
+
+            # If we have valid live telemetry snapshot for this node, use it directly!
+            if clean_id in _LAST_VALID_DASHBOARD:
+                items.append(cls._build_device_overview(_LAST_VALID_DASHBOARD[clean_id]))
+                continue
+            if dev_str in _LAST_VALID_DASHBOARD:
+                items.append(cls._build_device_overview(_LAST_VALID_DASHBOARD[dev_str]))
+                continue
+
             cached = _METADATA_CACHE.get(clean_id) or _METADATA_CACHE.get(dev_str)
             meta = cached["data"] if (cached and cached.get("data")) else {
                 "name": f"AWS {clean_id}",
-                "breed": "CowNeck Collar Cow",
+                "breed": None,
                 "location": "Paddock AWS",
                 "weight": "480 kg",
                 "notes": "AWS Collar Node",
@@ -793,10 +941,10 @@ class AwsTelemetryService:
                 "tagNumber": meta.get("tagNumber") or f"AWS {clean_id}",
                 "name": meta.get("name") or f"AWS {clean_id}",
                 "breed": meta.get("breed"),
-                "location": meta.get("location"),
-                "weight": meta.get("weight"),
-                "healthStatus": "HEALTHY",
-                "health_risk_decision": "HEALTHY",
+                "location": meta.get("location") or "Paddock AWS",
+                "weight": meta.get("weight") or "480 kg",
+                "healthStatus": "NORMAL",
+                "health_risk_decision": "NORMAL",
                 "currentActivity": "RES",
                 "activityName": "Standing Rest",
                 "ruminationHoursToday": 0.0,
@@ -805,7 +953,7 @@ class AwsTelemetryService:
                 "movingHoursToday": 0.0,
                 "estrusProbability": 0,
                 "lastSeen": now_iso,
-                "isStale": False,
+                "isStale": True,
                 "monitoredHoursToday": 0.0
             })
         return items

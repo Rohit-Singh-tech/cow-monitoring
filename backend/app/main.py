@@ -196,6 +196,12 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
     data_7day = get_cow_7day_activity(cow_id, db)
     return {"success": True, **data_7day}
 
+@app.post("/api/aws/clear-cache", tags=["Admin"])
+def api_clear_aws_cache():
+    from app.services.aws_service import AwsTelemetryService
+    AwsTelemetryService.clear_all_telemetry_cache()
+    return {"success": True, "message": "All AWS telemetry caches and snapshots cleared."}
+
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
 def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
     """Activity log using pre-computed ML inferences or AWS API."""
@@ -215,12 +221,12 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
         
     cow = resolve_db_cow(cow_id, db)
     if not cow:
-        try:
-            return AwsTelemetryService.get_activity_logs(str(cow_id), page=page, limit=limit)
-        except Exception:
-            pass
+        clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
+            return AwsTelemetryService.get_activity_logs(clean_id, page=page, limit=limit)
+        return {"success": True, "logs": [], "page": page, "limit": limit, "source": "render_db"}
         
-    dev_id = cow.device_id if cow else str(cow_id)
+    dev_id = cow.device_id
     dev_cache_key = f"{dev_id}_{page}_{limit}"
     cached = _DB_ACT_LOGS_CACHE.get(dev_cache_key)
     if cached and cached.get("expires_at", 0) > now_ts:

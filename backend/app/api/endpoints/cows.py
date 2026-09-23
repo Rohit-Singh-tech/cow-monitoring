@@ -21,13 +21,18 @@ router = APIRouter()
 def resolve_aws_device_id(cow_id: str) -> Optional[str]:
     """
     Checks if cow_id refers to an AWS Collar device.
-    Supports formats like 'aws-8', 'AWS-8'.
+    Supports formats like 'aws-8', 'AWS-8', 'aws 8', 'AWS 8', 'AWS#8', and '8'
+    (matching configured settings.AWS_ENABLED_DEVICE_IDS).
     """
     if not cow_id:
         return None
     s = str(cow_id).strip()
-    if s.lower().startswith("aws-"):
-        return s.split("-", 1)[1]
+    s_clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+    aws_set = set([str(x).strip() for x in settings.AWS_ENABLED_DEVICE_IDS])
+    if s_clean in aws_set:
+        return s_clean
+    if s.lower().startswith("aws-") or s.lower().startswith("aws ") or s.lower().startswith("aws#"):
+        return s_clean
     return None
 
 
@@ -172,10 +177,8 @@ def get_herd_overview(db: Session = Depends(get_db)):
     else:
         try:
             cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
-            aws_ids = set([str(x).strip() for x in settings.AWS_ENABLED_DEVICE_IDS])
-            
             # Filter out TagRegistry entries that represent AWS devices
-            db_cows = [c for c in cows if str(c.device_id).strip() not in aws_ids and not str(c.device_id).lower().startswith("aws-")]
+            db_cows = [c for c in cows if resolve_aws_device_id(c.device_id) is None]
 
             if db_cows:
                 today = date.today()
@@ -281,9 +284,10 @@ def resolve_db_cow(cow_id: str, db: Session):
     """
     if not cow_id:
         return None
-    s = str(cow_id).strip()
-    if s.lower().startswith("aws-"):
+    # If this matches an AWS collar device, NEVER treat as a DB cow!
+    if resolve_aws_device_id(cow_id) is not None:
         return None
+    s = str(cow_id).strip()
 
     cow = None
     try:
@@ -336,25 +340,10 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         
     if not cow:
         # Check if cow_id can be resolved via AWS directly
-        clean_id = str(cow_id).strip().lower().replace("aws-", "")
+        clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
-            try:
-                return AwsTelemetryService.get_live_dashboard(clean_id, target_date=target_date)
-            except Exception:
-                pass
-
-        try:
-            cow = db.query(TagRegistry).first()
-        except Exception:
-            pass
-        
-    if not cow:
-        # Final fallback to default AWS Device 8
-        try:
-            return AwsTelemetryService.get_live_dashboard("8", target_date=target_date)
-        except Exception:
-            pass
-        raise HTTPException(status_code=404, detail="No cattle nodes registered in database or AWS.")
+            return AwsTelemetryService.get_live_dashboard(clean_id, target_date=target_date)
+        raise HTTPException(status_code=404, detail=f"No cattle node registered for ID '{cow_id}'.")
 
     dev_id = str(cow.device_id)
     now_ts = time.time()
@@ -593,18 +582,12 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
 
     cow = resolve_db_cow(cow_id, db)
     if not cow:
-        clean_id = str(cow_id).strip().lower().replace("aws-", "")
+        clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
-            try:
-                return AwsTelemetryService.get_7day_activity(clean_id)
-            except Exception:
-                pass
-        try:
-            cow = db.query(TagRegistry).first()
-        except Exception:
-            pass
-        
-    dev_id = cow.device_id if cow else str(cow_id)
+            return AwsTelemetryService.get_7day_activity(clean_id)
+        raise HTTPException(status_code=404, detail=f"No cattle node registered for ID '{cow_id}'.")
+
+    dev_id = cow.device_id
 
     # Also check cache by resolved dev_id
     cached_7day = _DB_COW_7DAY_CACHE.get(str(dev_id))
