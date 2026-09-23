@@ -245,7 +245,7 @@ def get_herd_overview(db: Session = Depends(get_db)):
                         "isStale": stale,
                         "monitoredHoursToday": summary.monitored_hours if summary else 0.0
                     })
-                _DB_HERD_CACHE = {"expires_at": now_ts + 10.0, "data": db_items}
+                _DB_HERD_CACHE = {"expires_at": now_ts + 120.0, "data": db_items}
         except Exception as e:
             logger.warning(f"Error querying database cows for herd overview: {e}")
 
