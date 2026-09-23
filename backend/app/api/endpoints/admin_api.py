@@ -13,12 +13,24 @@ class UserCreateRequest(BaseModel):
     email: str
     password: str
 
+from typing import Optional
+
 class TagCreateRequest(BaseModel):
     device_id: str
     name: str
-    breed: str = None
-    location: str = None
-    description: str = None
+    breed: Optional[str] = None
+    location: Optional[str] = None
+    weight: Optional[str] = None
+    notes: Optional[str] = None
+    description: Optional[str] = None
+
+class TagUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    breed: Optional[str] = None
+    location: Optional[str] = None
+    weight: Optional[str] = None
+    notes: Optional[str] = None
+    description: Optional[str] = None
 
 @router.get("/users")
 def get_users(db: Session = Depends(get_db)):
@@ -53,29 +65,157 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"success": True, "message": "User deleted successfully"}
 
-@router.post("/tags")
-def create_tag(request: TagCreateRequest, db: Session = Depends(get_db)):
-    existing_tag = db.query(TagRegistry).filter(TagRegistry.device_id == request.device_id).first()
-    if existing_tag:
-        raise HTTPException(status_code=400, detail="Device ID already registered")
-    
-    new_tag = TagRegistry(
-        device_id=request.device_id,
-        name=request.name,
-        breed=request.breed,
-        location=request.location,
-        notes=request.description
-    )
-    db.add(new_tag)
-    db.commit()
-    db.refresh(new_tag)
-    return {"success": True, "message": "Tag registered successfully"}
+@router.get("/tags")
+def get_tags(db: Session = Depends(get_db)):
+    """Fetch all registered cow tags/devices from TagRegistry."""
+    tags = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
+    items = []
+    for t in tags:
+        items.append({
+            "id": t.id,
+            "device_id": t.device_id,
+            "name": t.name,
+            "breed": t.breed,
+            "location": t.location,
+            "weight": t.weight,
+            "notes": t.notes,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "updated_at": t.updated_at.isoformat() if t.updated_at else None
+        })
+    return {"success": True, "tags": items}
 
-@router.delete("/tags/{tag_id}")
-def delete_tag(tag_id: int, db: Session = Depends(get_db)):
-    tag = db.query(TagRegistry).filter(TagRegistry.id == tag_id).first()
+@router.post("/tags")
+def create_or_upsert_tag(request: TagCreateRequest, db: Session = Depends(get_db)):
+    """Create or update a cow tag in TagRegistry (works for both Render DB and AWS devices)."""
+    dev_str = str(request.device_id).strip()
+    tag = db.query(TagRegistry).filter(TagRegistry.device_id == dev_str).first()
+    notes_val = request.notes or request.description
+
+    if tag:
+        tag.name = request.name
+        if request.breed is not None:
+            tag.breed = request.breed
+        if request.location is not None:
+            tag.location = request.location
+        if request.weight is not None:
+            tag.weight = request.weight
+        if notes_val is not None:
+            tag.notes = notes_val
+        action = "updated"
+    else:
+        tag = TagRegistry(
+            device_id=dev_str,
+            name=request.name,
+            breed=request.breed,
+            location=request.location,
+            weight=request.weight,
+            notes=notes_val
+        )
+        db.add(tag)
+        action = "registered"
+
+    db.commit()
+    db.refresh(tag)
+
+    # Invalidate AWS metadata & herd overview cache immediately
+    try:
+        from app.services.aws_service import AwsTelemetryService
+        AwsTelemetryService.clear_cache()
+    except Exception:
+        pass
+
+    return {
+        "success": True, 
+        "message": f"Tag {dev_str} successfully {action}!",
+        "tag": {
+            "id": tag.id,
+            "device_id": tag.device_id,
+            "name": tag.name,
+            "breed": tag.breed,
+            "location": tag.location,
+            "weight": tag.weight,
+            "notes": tag.notes
+        }
+    }
+
+@router.put("/tags/{identifier}")
+def update_tag(identifier: str, request: TagUpdateRequest, db: Session = Depends(get_db)):
+    """Update a cow tag by primary key ID or device_id."""
+    tag = None
+    if str(identifier).isdigit():
+        tag = db.query(TagRegistry).filter(TagRegistry.id == int(identifier)).first()
     if not tag:
-        raise HTTPException(status_code=404, detail="Tag not found")
+        tag = db.query(TagRegistry).filter(TagRegistry.device_id == str(identifier)).first()
+
+    if not tag:
+        # Auto-create if not existing
+        dev_str = str(identifier).strip()
+        tag = TagRegistry(
+            device_id=dev_str,
+            name=request.name or f"Device #{dev_str}",
+            breed=request.breed,
+            location=request.location,
+            weight=request.weight,
+            notes=request.notes or request.description
+        )
+        db.add(tag)
+    else:
+        if request.name is not None:
+            tag.name = request.name
+        if request.breed is not None:
+            tag.breed = request.breed
+        if request.location is not None:
+            tag.location = request.location
+        if request.weight is not None:
+            tag.weight = request.weight
+        notes_val = request.notes or request.description
+        if notes_val is not None:
+            tag.notes = notes_val
+
+    db.commit()
+    db.refresh(tag)
+
+    # Invalidate AWS metadata & herd overview cache
+    try:
+        from app.services.aws_service import AwsTelemetryService
+        AwsTelemetryService.clear_cache()
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "message": f"Tag {tag.device_id} updated successfully!",
+        "tag": {
+            "id": tag.id,
+            "device_id": tag.device_id,
+            "name": tag.name,
+            "breed": tag.breed,
+            "location": tag.location,
+            "weight": tag.weight,
+            "notes": tag.notes
+        }
+    }
+
+@router.delete("/tags/{identifier}")
+def delete_tag(identifier: str, db: Session = Depends(get_db)):
+    """Delete a tag by ID or device_id."""
+    tag = None
+    if str(identifier).isdigit():
+        tag = db.query(TagRegistry).filter(TagRegistry.id == int(identifier)).first()
+    if not tag:
+        tag = db.query(TagRegistry).filter(TagRegistry.device_id == str(identifier)).first()
+
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found in TagRegistry")
+    
     db.delete(tag)
     db.commit()
+
+    try:
+        from app.services.aws_service import AwsTelemetryService
+        AwsTelemetryService.clear_cache()
+    except Exception:
+        pass
+
     return {"success": True, "message": "Tag deleted successfully"}
+

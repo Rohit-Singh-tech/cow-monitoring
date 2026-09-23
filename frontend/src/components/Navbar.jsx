@@ -39,19 +39,19 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
         <div className="header-controls">
           {/* Node Selector */}
           <div className="cow-select-wrapper">
-            <i className="fa-solid fa-microchip" style={{ color: 'var(--accent-emerald)', fontSize: '0.8rem' }}></i>
-            <span className="cow-select-label">TARGET NODE:</span>
+            <span className="cow-select-label">NODE:</span>
             <select
               className="cow-select"
               value={currentCowId}
               onChange={(e) => onSelectCow(e.target.value)}
             >
               {cows.map((c) => {
-                const srcTag = c.source === 'aws_api' ? '☁️ AWS' : '🗄️ DB';
+                const isAws = c.source === 'aws_api' || String(c.id).startsWith('aws-');
+                const srcTag = isAws ? 'Aws' : 'Gatewayless';
                 const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
                 return (
                   <option key={c.id} value={c.id}>
-                    [{srcTag}] NODE #{c.device_id} - {c.name} [{healthTag}]
+                    [{srcTag}] #{c.device_id} - {c.name} ({healthTag})
                   </option>
                 );
               })}
@@ -65,7 +65,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
           </div>
 
           {/* Live Monospace Clock */}
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '0 0.15rem' }}>
+          <div className="header-clock" style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '0 0.25rem' }}>
             {new Date().toLocaleTimeString('en-US', { hour12: false })}
           </div>
 
@@ -92,7 +92,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
           {/* DUMP LOGS CSV Button */}
           <a
             href={`/api/export/csv?cowId=${currentCowId}`}
-            className="btn btn-secondary"
+            className="btn btn-secondary btn-dump-logs"
             target="_blank"
             rel="noreferrer"
           >

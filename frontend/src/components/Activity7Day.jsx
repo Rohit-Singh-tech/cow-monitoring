@@ -12,7 +12,7 @@ import {
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import { useConfig } from '../context/ConfigContext';
-import { formatHours } from '../utils';
+import { formatHours, formatDetailedDuration } from '../utils';
 
 ChartJS.register(
   CategoryScale,
@@ -196,7 +196,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
     }
   };
 
-  // Compute Weekly Averages
+  // Compute Weekly Averages (use exact float values to preserve sub-hour minute and second precision)
   const avg = data7Day.weeklyAverageHours || (() => {
     if (!history || history.length === 0) return { REL: 0, RUS: 0, FEP: 0, MOV: 0, DRN: 0 };
     const sums = history.reduce((acc, curr) => ({
@@ -208,12 +208,12 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
       DRN: acc.DRN + (curr.DRN || 0)
     }), { REL: 0, RUS: 0, FEP: 0, MOV: 0, RES: 0, DRN: 0 });
     return {
-      REL: (sums.REL / history.length).toFixed(1),
-      RUS: (sums.RUS / history.length).toFixed(1),
-      FEP: (sums.FEP / history.length).toFixed(1),
-      MOV: (sums.MOV / history.length).toFixed(1),
-      RES: (sums.RES / history.length).toFixed(1),
-      DRN: (sums.DRN / history.length).toFixed(1)
+      REL: sums.REL / history.length,
+      RUS: sums.RUS / history.length,
+      FEP: sums.FEP / history.length,
+      MOV: sums.MOV / history.length,
+      RES: sums.RES / history.length,
+      DRN: sums.DRN / history.length
     };
   })();
 
@@ -280,31 +280,31 @@ export default function Activity7Day({ data7Day, logs, cowId, theme }) {
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-bed" style={{ color: '#8B5CF6' }}></i> Total Rest (REL+RES):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-purple)' }}>{formatHours(avg.REL)}/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-purple)' }}>{formatDetailedDuration(avg.REL)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-arrows-spin" style={{ color: '#06B6D4' }}></i> Standing Rumination (RUS):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{formatHours(avg.RUS)}/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-sky)' }}>{formatDetailedDuration(avg.RUS)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-bowl-food" style={{ color: '#10B981' }}></i> Feeding (FEP):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-emerald)' }}>{formatHours(avg.FEP)}/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-emerald)' }}>{formatDetailedDuration(avg.FEP)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-person-walking" style={{ color: '#F59E0B' }}></i> Movement / Activity (MOV):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-amber)' }}>{formatHours(avg.MOV)}/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-amber)' }}>{formatDetailedDuration(avg.MOV)}/day</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
                   <i className="fa-solid fa-glass-water" style={{ color: '#3B82F6' }}></i> Drinking (DRN):
                 </span>
-                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-cyan)' }}>{formatHours(avg.DRN)}/day</strong>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: 'var(--accent-cyan)' }}>{formatDetailedDuration(avg.DRN)}/day</strong>
               </div>
             </div>
           </div>

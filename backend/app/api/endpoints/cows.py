@@ -4,6 +4,7 @@ from sqlalchemy import text, func, desc
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta, date
 import math
+import time
 import logging
 
 from app.database import get_db
@@ -20,15 +21,13 @@ router = APIRouter()
 def resolve_aws_device_id(cow_id: str) -> Optional[str]:
     """
     Checks if cow_id refers to an AWS Collar device.
-    Supports formats like 'aws-8', 'AWS-8', or direct numeric ID in AWS_ENABLED_DEVICE_IDS.
+    Supports formats like 'aws-8', 'AWS-8'.
     """
     if not cow_id:
         return None
     s = str(cow_id).strip()
     if s.lower().startswith("aws-"):
         return s.split("-", 1)[1]
-    if s in settings.AWS_ENABLED_DEVICE_IDS:
-        return s
     return None
 
 
@@ -142,77 +141,117 @@ def _build_health_status_from_inference(inference, summary=None):
     }
 
 
+_DB_HERD_CACHE = {"expires_at": 0.0, "data": []}
+
 @router.get("", response_model=List[dict])
 def get_herd_overview(db: Session = Depends(get_db)):
     """
     Herd overview: returns both Render Database devices and AWS CowNeck API devices.
-    Fully data-driven with source tracking.
+    Uses batch queries and fast in-memory caching for sub-10ms response times.
     """
-    result = []
+    global _DB_HERD_CACHE
+    now_ts = time.time()
+    
+    # 1. Fetch Render Database cows (cached for 10s to keep ultra-fast)
+    db_items = []
+    if _DB_HERD_CACHE.get("expires_at", 0) > now_ts and _DB_HERD_CACHE.get("data"):
+        db_items = _DB_HERD_CACHE["data"]
+    else:
+        try:
+            cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
+            aws_ids = set([str(x).strip() for x in settings.AWS_ENABLED_DEVICE_IDS])
+            
+            # Filter out TagRegistry entries that represent AWS devices
+            db_cows = [c for c in cows if str(c.device_id).strip() not in aws_ids and not str(c.device_id).lower().startswith("aws-")]
 
-    # 1. Fetch Render Database cows
-    try:
-        cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
-        if cows:
-            today = date.today()
-            all_summaries = db.query(DailyCowSummary).filter(
-                DailyCowSummary.date == today
-            ).all()
-            summaries_by_device = {s.device_id: s for s in all_summaries}
+            if db_cows:
+                today = date.today()
+                all_summaries = db.query(DailyCowSummary).filter(
+                    DailyCowSummary.date == today
+                ).all()
+                summaries_by_device = {s.device_id: s for s in all_summaries}
 
-            for c in cows:
-                dev_id = str(c.device_id)
-                header, inference = _get_latest_inference_for_device(db, dev_id)
-                ts = header.timestamp if header else None
-                stale = _is_device_stale(ts)
-                summary = summaries_by_device.get(dev_id)
-                health = _build_health_status_from_inference(inference, summary)
+                # Single batch query to get latest headers and inferences for ALL devices at once
+                batch_sql = text("""
+                    SELECT h.id, h.device_id, h.timestamp, m.activity_code, m.confidence, m.is_heat, 
+                           m.heat_probability, m.health_risk_decision, m.anomaly_score
+                    FROM datalogger_headers h
+                    LEFT JOIN ml_inferences m ON h.id = m.header_id
+                    WHERE h.id IN (
+                        SELECT MAX(id) FROM datalogger_headers GROUP BY device_id
+                    )
+                """)
+                inf_rows = db.execute(batch_sql).fetchall()
+                inf_by_device = {}
+                for r in inf_rows:
+                    inf_by_device[str(r[1])] = {
+                        "header_id": r[0],
+                        "timestamp": r[2],
+                        "act_code": r[3],
+                        "confidence": r[4],
+                        "is_heat": r[5],
+                        "heat_prob": r[6],
+                        "health_risk": r[7],
+                        "anomaly_score": r[8] if len(r) > 8 else 0.0
+                    }
 
-                if stale:
-                    rum_hrs = 0.0
-                    lying_hrs = 0.0
-                    feed_hrs = 0.0
-                    move_hrs = 0.0
-                    act_code = None
-                    health_risk = None
-                    heat_prob_pct = 0
-                else:
-                    rum_hrs = summary.rumination_hours if summary else 0.0
-                    lying_hrs = summary.lying_hours if summary else 0.0
-                    feed_hrs = summary.feeding_hours if summary else 0.0
-                    move_hrs = summary.moving_hours if summary else 0.0
-                    act_code = health["act_code"]
-                    health_risk = health["health_risk"]
-                    heat_prob_pct = health["heat_prob_pct"]
+                for c in db_cows:
+                    dev_id = str(c.device_id).strip()
+                    inf = inf_by_device.get(dev_id)
+                    ts = inf["timestamp"] if inf else None
+                    stale = _is_device_stale(ts)
+                    summary = summaries_by_device.get(dev_id)
 
-                act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
+                    act_code = inf["act_code"] if inf else None
+                    health_risk = inf["health_risk"] if inf else "NO_DATA"
+                    is_heat = inf["is_heat"] if inf else False
+                    heat_prob_pct = int((inf["heat_prob"] or 0) * 100) if inf and inf["heat_prob"] else 0
+                    
+                    if stale:
+                        rum_hrs = 0.0
+                        lying_hrs = 0.0
+                        feed_hrs = 0.0
+                        move_hrs = 0.0
+                        act_code = None
+                        health_risk = "NO_DATA"
+                        heat_prob_pct = 0
+                    else:
+                        rum_hrs = summary.rumination_hours if summary else 0.0
+                        lying_hrs = summary.lying_hours if summary else 0.0
+                        feed_hrs = summary.feeding_hours if summary else 0.0
+                        move_hrs = summary.moving_hours if summary else 0.0
 
-                result.append({
-                    "id": c.id,
-                    "device_id": dev_id,
-                    "source": "render_db",
-                    "tagNumber": f"TAG-{c.device_id}",
-                    "name": c.name or f"Device #{c.device_id}",
-                    "breed": c.breed or None,
-                    "location": c.location or None,
-                    "weight": f"{c.weight} kg" if c.weight else None,
-                    "healthStatus": health_risk or "NO_DATA",
-                    "health_risk_decision": health_risk or "NO_DATA",
-                    "currentActivity": act_code,
-                    "activityName": act_info["name"] if act_code else "No Recent Data",
-                    "ruminationHoursToday": rum_hrs,
-                    "lyingHoursToday": lying_hrs,
-                    "feedingHoursToday": feed_hrs,
-                    "movingHoursToday": move_hrs,
-                    "estrusProbability": heat_prob_pct,
-                    "lastSeen": ts.isoformat() if ts else None,
-                    "isStale": stale,
-                    "monitoredHoursToday": summary.monitored_hours if summary else 0.0
-                })
-    except Exception as e:
-        logger.warning(f"Error querying database cows for herd overview: {e}")
+                    act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
 
-    # 2. Fetch AWS Cloud Collar devices
+                    db_items.append({
+                        "id": dev_id,
+                        "device_id": dev_id,
+                        "source": "gatewayless",
+                        "tagNumber": f"TAG-{c.device_id}",
+                        "name": c.name or f"Device #{c.device_id}",
+                        "breed": c.breed or None,
+                        "location": c.location or None,
+                        "weight": f"{c.weight} kg" if c.weight and not str(c.weight).endswith("kg") else (c.weight or None),
+                        "healthStatus": health_risk or "NO_DATA",
+                        "health_risk_decision": health_risk or "NO_DATA",
+                        "currentActivity": act_code,
+                        "activityName": act_info["name"] if act_code else "No Recent Data",
+                        "ruminationHoursToday": rum_hrs,
+                        "lyingHoursToday": lying_hrs,
+                        "feedingHoursToday": feed_hrs,
+                        "movingHoursToday": move_hrs,
+                        "estrusProbability": heat_prob_pct,
+                        "lastSeen": ts.isoformat() if ts else None,
+                        "isStale": stale,
+                        "monitoredHoursToday": summary.monitored_hours if summary else 0.0
+                    })
+                _DB_HERD_CACHE = {"expires_at": now_ts + 10.0, "data": db_items}
+        except Exception as e:
+            logger.warning(f"Error querying database cows for herd overview: {e}")
+
+    result = list(db_items)
+
+    # 2. Fetch AWS Cloud Collar devices (Parallel & 60s cached)
     try:
         aws_items = AwsTelemetryService.get_herd_overview_items()
         result.extend(aws_items)
@@ -227,13 +266,19 @@ def resolve_db_cow(cow_id: str, db: Session):
     Resolves a cow in the database by device_id or primary key id.
     Returns TagRegistry object if found, or a proxy object if headers exist for device_id.
     """
+    if not cow_id:
+        return None
+    s = str(cow_id).strip()
+    if s.lower().startswith("aws-"):
+        return None
+
     cow = None
     try:
         # First match by device_id (e.g. '17', 'COW-BLE-001')
-        cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
-        # Second match by primary key id (e.g. 1)
-        if not cow and str(cow_id).isdigit():
-            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+        cow = db.query(TagRegistry).filter(TagRegistry.device_id == s).first()
+        # Second match by primary key id (only if not an AWS collar ID)
+        if not cow and s.isdigit() and s not in settings.AWS_ENABLED_DEVICE_IDS:
+            cow = db.query(TagRegistry).filter(TagRegistry.id == int(s)).first()
     except Exception as e:
         logger.warning(f"Error querying TagRegistry for {cow_id}: {e}")
     
@@ -272,12 +317,12 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
         
     if not cow:
         # Check if cow_id can be resolved via AWS directly
-        try:
-            aws_dash = AwsTelemetryService.get_live_dashboard(str(cow_id))
-            if aws_dash and not aws_dash.get("isStale"):
-                return aws_dash
-        except Exception:
-            pass
+        clean_id = str(cow_id).strip().lower().replace("aws-", "")
+        if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
+            try:
+                return AwsTelemetryService.get_live_dashboard(clean_id)
+            except Exception:
+                pass
 
         try:
             cow = db.query(TagRegistry).first()
@@ -408,9 +453,9 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
 
     return {
-        "cowId": cow.id,
+        "cowId": str(cow.device_id),
         "device_id": dev_id,
-        "source": "render_db",
+        "source": "gatewayless",
         "cowName": cow.name or f"Device #{cow.device_id}",
         "tagNumber": f"TAG-{cow.device_id}",
         "breed": cow.breed or None,
@@ -509,8 +554,14 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
 
     cow = resolve_db_cow(cow_id, db)
     if not cow:
+        clean_id = str(cow_id).strip().lower().replace("aws-", "")
+        if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
+            try:
+                return AwsTelemetryService.get_7day_activity(clean_id)
+            except Exception:
+                pass
         try:
-            return AwsTelemetryService.get_7day_activity(str(cow_id))
+            cow = db.query(TagRegistry).first()
         except Exception:
             pass
         
@@ -594,10 +645,20 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             health_score_list.append(0)
             estrus_index_list.append(0)
 
+    tot_days = max(1, len(date_range))
+    weekly_avg = {
+        "RUS": sum(rum_list) / tot_days,
+        "REL": sum(lying_list) / tot_days,
+        "FEP": sum(feed_list) / tot_days,
+        "MOV": sum(act_list) / tot_days,
+        "RES": 0.0,
+        "DRN": 0.0
+    }
+
     return {
-        "cowId": cow_id,
+        "cowId": str(dev_id),
         "device_id": str(dev_id),
-        "source": "render_db",
+        "source": "gatewayless",
         "days": days,
         "dates": dates,
         "ruminationHours": rum_list,
@@ -607,5 +668,6 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         "monitoredHours": monitored_list,
         "healthScores": health_score_list,
         "estrusIndices": estrus_index_list,
-        "estrusAlerts": []
+        "estrusAlerts": [],
+        "weeklyAverageHours": weekly_avg
     }

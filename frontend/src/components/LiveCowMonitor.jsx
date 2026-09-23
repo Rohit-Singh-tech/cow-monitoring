@@ -231,9 +231,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
               <span className="meta-chip"><i className="fa-solid fa-microchip" style={{ marginRight: '0.35rem', color: 'var(--accent-sky)' }}></i>Node: {currentData.device_id}</span>
               <span className={`meta-chip source-chip ${currentData.source === 'aws_api' || String(currentData.cowId || '').startsWith('aws-') ? 'aws' : 'db'}`}>
                 {currentData.source === 'aws_api' || String(currentData.cowId || '').startsWith('aws-') ? (
-                  <><i className="fa-solid fa-cloud" style={{ marginRight: '0.35rem', color: '#F59E0B' }}></i>AWS CowNeck API</>
+                  <><i className="fa-solid fa-cloud" style={{ marginRight: '0.35rem', color: '#F59E0B' }}></i>Aws</>
                 ) : (
-                  <><i className="fa-solid fa-database" style={{ marginRight: '0.35rem', color: '#38BDF8' }}></i>Render Database</>
+                  <><i className="fa-solid fa-database" style={{ marginRight: '0.35rem', color: '#38BDF8' }}></i>Gatewayless</>
                 )}
               </span>
               {currentData.breed && <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>}

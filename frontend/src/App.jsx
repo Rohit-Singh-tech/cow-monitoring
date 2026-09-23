@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import TabBar from './components/TabBar';
 import LiveCowMonitor from './components/LiveCowMonitor';
@@ -6,6 +6,7 @@ import Activity7Day from './components/Activity7Day';
 import HerdOverview from './components/HerdOverview';
 import HardwareSpecs from './components/HardwareSpecs';
 import ProjectDocs from './components/ProjectDocs';
+import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
 import './index.css';
 
@@ -68,37 +69,35 @@ export default function App() {
     }));
   };
 
+  const fetchCows = useCallback(async () => {
+    if (cowsFetchingRef.current) return;
+    cowsFetchingRef.current = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/cows`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.success && data.cows && data.cows.length > 0) {
+        setCows(data.cows);
+        setCurrentCowId(prev => {
+          if (!prev) return data.cows[0].id;
+          return prev;
+        });
+        cowsErrorCountRef.current = 0; // Reset on success
+      }
+    } catch (err) {
+      console.error('Error fetching cows:', err);
+      cowsErrorCountRef.current += 1;
+    } finally {
+      cowsFetchingRef.current = false;
+    }
+  }, []);
+
   // 1. Fetch cow list — poll every 60s (cow list rarely changes)
   //    with error backoff: wait longer on consecutive failures
   useEffect(() => {
     if (!isAuthenticated) return;
     let isSubscribed = true;
-
-    const fetchCows = async () => {
-      // Skip if a fetch is already in-flight
-      if (cowsFetchingRef.current) return;
-      cowsFetchingRef.current = true;
-
-      try {
-        const res = await fetch(`${API_BASE}/api/cows`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (isSubscribed && data.success && data.cows && data.cows.length > 0) {
-          setCows(data.cows);
-          setCurrentCowId(prev => {
-            if (!prev) return data.cows[0].id;
-            return prev;
-          });
-          cowsErrorCountRef.current = 0; // Reset on success
-        }
-      } catch (err) {
-        console.error('Error fetching cows:', err);
-        cowsErrorCountRef.current += 1;
-      } finally {
-        cowsFetchingRef.current = false;
-      }
-    };
-
     fetchCows();
 
     // Dynamic interval: 60s normal, back off on errors (max 5 min)
@@ -325,7 +324,12 @@ export default function App() {
                 handleSelectCow(id);
                 setActiveTab('live');
               }}
+              onRefreshCows={fetchCows}
             />
+          )}
+
+          {activeTab === 'tag_registry' && (
+            <AdminPanel onRefreshCows={fetchCows} />
           )}
 
           {activeTab === 'hardware' && (

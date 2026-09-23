@@ -4,6 +4,7 @@ import json
 import math
 import time
 import logging
+import concurrent.futures
 from datetime import datetime, timezone, timedelta, date
 from typing import Dict, Any, List, Optional
 
@@ -29,21 +30,11 @@ ACTIVITY_MAP = {
     "ETC": {"code": "ETC", "name": "Other Activity", "color": "#94a3b8", "icon": "fa-ellipsis", "category": "Other"}
 }
 
-# Friendly cow metadata for AWS collar devices
-AWS_COW_METADATA = {
-    "8": {"name": "Kamdhenu (Sahiwal)", "breed": "Sahiwal Purebred", "location": "Paddock AWS - Zone 1", "weight": "480 kg", "notes": "Active estrus monitoring via CowNeck AWS Collar"},
-    "7": {"name": "Surabhi (HF Cross)", "breed": "Holstein Friesian Cross", "location": "Paddock AWS - Zone 2", "weight": "530 kg", "notes": "High yield milker on AWS Collar #7"},
-    "9": {"name": "Kaveri (Gir)", "breed": "Gir Purebred", "location": "Paddock AWS - Zone 1", "weight": "450 kg", "notes": "Native breed telemetry via AWS Collar #9"},
-    "1": {"name": "Ganga (Jersey)", "breed": "Jersey Cross", "location": "Barn AWS - Shed A", "weight": "490 kg", "notes": "Collar IoT node 1"},
-    "3": {"name": "Yamuna (Sahiwal)", "breed": "Sahiwal", "location": "Barn AWS - Shed B", "weight": "460 kg", "notes": "Collar IoT node 3"},
-    "4": {"name": "Saraswati (Tharparkar)", "breed": "Tharparkar", "location": "Barn AWS - Shed B", "weight": "475 kg", "notes": "Collar IoT node 4"},
-    "5": {"name": "Narmada (Red Sindhi)", "breed": "Red Sindhi", "location": "Paddock AWS - Zone 3", "weight": "440 kg", "notes": "Collar IoT node 5"},
-    "6": {"name": "Godavari (Kankrej)", "breed": "Kankrej", "location": "Paddock AWS - Zone 3", "weight": "510 kg", "notes": "Collar IoT node 6"}
-}
-
-# In-memory cache for AWS requests: { cache_key: { "expires_at": float, "data": Any } }
+# In-memory caches for high-speed API performance
 _AWS_CACHE: Dict[str, Dict[str, Any]] = {}
-CACHE_TTL_SECONDS = 60
+_HERD_ITEMS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": []}
+_METADATA_CACHE: Dict[str, Dict[str, Any]] = {}
+CACHE_TTL_SECONDS = 180
 
 
 def _parse_timestamp(pkt: dict) -> datetime:
@@ -78,18 +69,50 @@ class AwsTelemetryService:
         Handles gzip decompression, timeouts, and network errors.
         """
         now = datetime.now(timezone.utc)
-        if not end_date:
-            end_date = now.strftime("%d-%m-%Y")
-        if not start_date:
-            # Query the last 7 days window
-            start_date = (now - timedelta(days=7)).strftime("%d-%m-%Y")
+        
+        # Resolve 7-day date window (handles current date as start_date and 7 days back as end_date)
+        if not start_date and not end_date:
+            d_start = now - timedelta(days=7)
+            d_end = now
+        elif start_date and not end_date:
+            try:
+                dt = datetime.strptime(start_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+                if dt >= now - timedelta(days=1):
+                    d_start = dt - timedelta(days=7)
+                    d_end = dt
+                else:
+                    d_start = dt
+                    d_end = now
+            except Exception:
+                d_start = now - timedelta(days=7)
+                d_end = now
+        elif end_date and not start_date:
+            try:
+                dt = datetime.strptime(end_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+                d_start = dt - timedelta(days=7)
+                d_end = dt
+            except Exception:
+                d_start = now - timedelta(days=7)
+                d_end = now
+        else:
+            try:
+                dt1 = datetime.strptime(start_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+                dt2 = datetime.strptime(end_date, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+                d_start = min(dt1, dt2)
+                d_end = max(dt1, dt2)
+            except Exception:
+                d_start = now - timedelta(days=7)
+                d_end = now
 
-        cache_key = f"raw_{device_id}_{start_date}_{end_date}"
+        resolved_start = d_start.strftime("%d-%m-%Y")
+        resolved_end = d_end.strftime("%d-%m-%Y")
+
+        cache_key = f"raw_{device_id}_{resolved_start}_{resolved_end}"
         cached = _AWS_CACHE.get(cache_key)
         if cached and cached["expires_at"] > time.time():
             return cached["data"]
 
-        url = f"{settings.AWS_COWNECK_API_URL}?deviceid={device_id}&startdate={start_date}&enddate={end_date}"
+        url = f"{settings.AWS_COWNECK_API_URL}?deviceid={device_id}&startdate={resolved_start}&enddate={resolved_end}"
         req = urllib.request.Request(
             url, 
             headers={
@@ -99,7 +122,7 @@ class AwsTelemetryService:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 raw_bytes = response.read()
                 try:
                     raw_bytes = gzip.decompress(raw_bytes)
@@ -124,17 +147,17 @@ class AwsTelemetryService:
             return []
 
     @classmethod
-    def get_processed_packets(cls, device_id: str) -> List[dict]:
+    def get_processed_packets(cls, device_id: str, start_date: str = None, end_date: str = None) -> List[dict]:
         """
         Fetches AWS packets and runs ML inference on each 80-sample window.
         Returns a list of parsed packets with their full ML inference results.
         """
-        cache_key = f"processed_{device_id}"
+        cache_key = f"processed_{device_id}_{start_date}_{end_date}"
         cached = _AWS_CACHE.get(cache_key)
         if cached and cached["expires_at"] > time.time():
             return cached["data"]
 
-        raw_packets = cls.fetch_aws_raw(device_id)
+        raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date)
         if not raw_packets:
             return []
 
@@ -172,19 +195,79 @@ class AwsTelemetryService:
         return processed
 
     @classmethod
+    def clear_cache(cls):
+        """Clears all caches for immediate dynamic UI updates."""
+        global _AWS_CACHE, _HERD_ITEMS_CACHE, _METADATA_CACHE
+        _AWS_CACHE.clear()
+        _HERD_ITEMS_CACHE = {"expires_at": 0.0, "data": []}
+        _METADATA_CACHE.clear()
+        logger.info("Cleared AWS service caches.")
+
+    @classmethod
+    def load_all_tag_metadata(cls):
+        """Preload all tags from DB in ONE single query to avoid thread contention."""
+        global _METADATA_CACHE
+        now = time.time()
+        try:
+            from app.database import SessionLocal
+            from app.models.tag_registry import TagRegistry
+            with SessionLocal() as db:
+                tags = db.query(TagRegistry).all()
+                for tag in tags:
+                    dev_str = str(tag.device_id).strip()
+                    clean_id = dev_str.lower().replace("aws-", "")
+                    weight_val = f"{tag.weight} kg" if tag.weight and not str(tag.weight).endswith("kg") else (tag.weight or "480 kg")
+                    tag_no = tag.device_id if str(tag.device_id).startswith("TAG-") or str(tag.device_id).startswith("AWS-") else f"AWS-NECK-{tag.device_id}"
+                    meta = {
+                        "name": tag.name,
+                        "breed": tag.breed or "CowNeck Collar Cow",
+                        "location": tag.location or "Paddock AWS",
+                        "weight": weight_val,
+                        "notes": tag.notes or "Registered in Tag Registry",
+                        "tagNumber": tag_no
+                    }
+                    _METADATA_CACHE[clean_id] = {"expires_at": now + 120, "data": meta}
+                    _METADATA_CACHE[dev_str] = {"expires_at": now + 120, "data": meta}
+        except Exception as e:
+            logger.warning(f"Error preloading TagRegistry: {e}")
+
+    @classmethod
+    def get_device_metadata(cls, device_id: str) -> dict:
+        """
+        Dynamically fetch cow metadata from TagRegistry in DB.
+        Falls back to default config only if no TagRegistry record exists.
+        """
+        dev_str = str(device_id).strip()
+        clean_id = dev_str.lower().replace("aws-", "")
+        now = time.time()
+
+        cached = _METADATA_CACHE.get(clean_id) or _METADATA_CACHE.get(dev_str)
+        if not cached or cached.get("expires_at", 0) <= now:
+            cls.load_all_tag_metadata()
+            cached = _METADATA_CACHE.get(clean_id) or _METADATA_CACHE.get(dev_str)
+
+        if cached and cached.get("data"):
+            return cached["data"]
+
+        meta = {
+            "name": f"AWS {clean_id}",
+            "breed": None,
+            "location": None,
+            "weight": None,
+            "notes": None,
+            "tagNumber": f"AWS-{clean_id}"
+        }
+        _METADATA_CACHE[clean_id] = {"expires_at": now + 120, "data": meta}
+        return meta
+
+    @classmethod
     def get_live_dashboard(cls, device_id: str) -> dict:
         """
         Builds the Live Diagnostics dashboard payload for an AWS device.
         Matches exact schema of get_cow_live_dashboard in cows.py.
         """
         packets = cls.get_processed_packets(device_id)
-        dev_meta = AWS_COW_METADATA.get(str(device_id), {
-            "name": f"AWS Collar #{device_id}",
-            "breed": "CowNeck Smart Collar",
-            "location": "Paddock AWS - Cloud Stream",
-            "weight": "480 kg",
-            "notes": "Ingested via AWS CowNeck API"
-        })
+        dev_meta = cls.get_device_metadata(device_id)
 
         if not packets:
             now = datetime.now(timezone.utc)
@@ -193,7 +276,7 @@ class AwsTelemetryService:
                 "device_id": str(device_id),
                 "source": "aws_api",
                 "cowName": dev_meta["name"],
-                "tagNumber": f"AWS-NECK-{device_id}",
+                "tagNumber": dev_meta["tagNumber"],
                 "breed": dev_meta["breed"],
                 "location": dev_meta["location"],
                 "weight": dev_meta["weight"],
@@ -291,7 +374,7 @@ class AwsTelemetryService:
         elif health_risk == "MONITOR":
             recommendation = "MONITOR: Early behavioral deviations detected. Observe node closely over the next 6-12 hours."
         else:
-            recommendation = "All health parameters within normal range based on real-time AWS collar telemetry analysis."
+            recommendation = "All health parameters within normal range based on real-time AWS telemetry analysis."
 
         x_buf = latest["x_buf"]
         y_buf = latest["y_buf"]
@@ -304,7 +387,7 @@ class AwsTelemetryService:
             "device_id": str(device_id),
             "source": "aws_api",
             "cowName": dev_meta["name"],
-            "tagNumber": f"AWS-NECK-{device_id}",
+            "tagNumber": dev_meta.get("tagNumber") or f"AWS {device_id}",
             "breed": dev_meta["breed"],
             "location": dev_meta["location"],
             "weight": dev_meta["weight"],
@@ -351,7 +434,10 @@ class AwsTelemetryService:
         Builds the 7-day behavior distribution for an AWS device.
         Matches exact schema of get_cow_7day_activity in cows.py.
         """
-        packets = cls.get_processed_packets(device_id)
+        now = datetime.now(timezone.utc)
+        start_date = (now - timedelta(days=7)).strftime("%d-%m-%Y")
+        end_date = now.strftime("%d-%m-%Y")
+        packets = cls.get_processed_packets(device_id, start_date=start_date, end_date=end_date)
 
         # Last 7 calendar days up to the latest packet date
         if packets:
@@ -417,6 +503,16 @@ class AwsTelemetryService:
                 health_score_list.append(0)
                 estrus_index_list.append(0)
 
+        tot_days = max(1, len(date_range))
+        weekly_avg = {
+            "RUS": sum(rum_list) / tot_days,
+            "REL": sum(lying_list) / tot_days,
+            "FEP": sum(feed_list) / tot_days,
+            "MOV": sum(act_list) / tot_days,
+            "RES": 0.0,
+            "DRN": 0.0
+        }
+
         return {
             "cowId": f"aws-{device_id}",
             "device_id": str(device_id),
@@ -430,7 +526,8 @@ class AwsTelemetryService:
             "monitoredHours": monitored_list,
             "healthScores": health_score_list,
             "estrusIndices": estrus_index_list,
-            "estrusAlerts": []
+            "estrusAlerts": [],
+            "weeklyAverageHours": weekly_avg
         }
 
     @classmethod
@@ -439,7 +536,10 @@ class AwsTelemetryService:
         Builds chronological activity transition logs for an AWS device.
         Matches exact schema of api_get_cow_activity_log in main.py.
         """
-        packets = cls.get_processed_packets(device_id)
+        now = datetime.now(timezone.utc)
+        start_date = (now - timedelta(days=7)).strftime("%d-%m-%Y")
+        end_date = now.strftime("%d-%m-%Y")
+        packets = cls.get_processed_packets(device_id, start_date=start_date, end_date=end_date)
         if not packets:
             return {"success": True, "logs": [], "page": page, "limit": limit, "source": "aws_api"}
 
@@ -519,25 +619,32 @@ class AwsTelemetryService:
         }
 
     @classmethod
-    def get_herd_overview_items(cls, device_ids: List[str] = None) -> List[dict]:
+    def get_herd_overview_items(cls, device_ids: List[str] = None, force_refresh: bool = False) -> List[dict]:
         """
         Returns list of herd overview summary dicts for all configured AWS devices.
+        Uses ThreadPoolExecutor for high-speed parallel fetching and 60-second in-memory caching.
         """
+        global _HERD_ITEMS_CACHE
+        now = time.time()
+        if not force_refresh and _HERD_ITEMS_CACHE.get("expires_at", 0) > now and _HERD_ITEMS_CACHE.get("data"):
+            return _HERD_ITEMS_CACHE["data"]
+
         if not device_ids:
             device_ids = settings.AWS_ENABLED_DEVICE_IDS
 
-        items = []
-        for dev_id in device_ids:
+        # Preload metadata from PostgreSQL once to avoid any thread contention
+        cls.load_all_tag_metadata()
+
+        def fetch_single(dev_id):
             dev_str = str(dev_id).strip()
             dash = cls.get_live_dashboard(dev_str)
             h = dash["healthStatus"]
             act = dash["currentActivity"]
-            
-            items.append({
+            return {
                 "id": f"aws-{dev_str}",
                 "device_id": dev_str,
                 "source": "aws_api",
-                "tagNumber": dash["tagNumber"],
+                "tagNumber": dash.get("tagNumber") or f"AWS {dev_str}",
                 "name": dash["cowName"],
                 "breed": dash["breed"],
                 "location": dash["location"],
@@ -554,5 +661,26 @@ class AwsTelemetryService:
                 "lastSeen": dash["liveTelemetry"]["timestamp"],
                 "isStale": dash["isStale"],
                 "monitoredHoursToday": h["monitoredHoursToday"]
-            })
+            }
+
+        items = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(device_ids), 8)) as executor:
+            future_to_dev = {executor.submit(fetch_single, dev_id): dev_id for dev_id in device_ids}
+            for future in concurrent.futures.as_completed(future_to_dev):
+                try:
+                    item = future.result()
+                    items.append(item)
+                except Exception as e:
+                    dev_id = future_to_dev[future]
+                    logger.warning(f"Error fetching AWS overview item for device {dev_id}: {e}")
+
+        # Preserve original configured order of device IDs
+        device_order = {str(d).strip(): idx for idx, d in enumerate(device_ids)}
+        items.sort(key=lambda x: device_order.get(x["device_id"], 999))
+
+        _HERD_ITEMS_CACHE = {
+            "expires_at": now + CACHE_TTL_SECONDS,
+            "data": items
+        }
         return items
+

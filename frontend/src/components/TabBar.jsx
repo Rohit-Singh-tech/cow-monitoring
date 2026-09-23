@@ -5,6 +5,7 @@ export default function TabBar({ activeTab, onSelectTab, onLogout, isOpen, onClo
     { id: 'live', icon: 'fa-heart-pulse', label: 'SYS DIAGNOSTICS' },
     { id: '7day', icon: 'fa-calendar-week', label: '7-DAY LOGS' },
     { id: 'herd', icon: 'fa-cow', label: 'NODE DIRECTORY' },
+    { id: 'tag_registry', icon: 'fa-tags', label: 'COW TAG REGISTRY' },
     { id: 'hardware', icon: 'fa-microchip', label: 'HARDWARE SPECS' },
     { id: 'docs', icon: 'fa-book-open', label: 'ARCHIVES' }
   ];

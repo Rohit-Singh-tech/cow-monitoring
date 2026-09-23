@@ -63,7 +63,20 @@ async def lifespan(app: FastAPI):
     # Start background ML inference worker
     worker_task = asyncio.create_task(run_inference_loop())
     logger.info("Background ML inference worker started.")
-    
+
+    # Pre-warm AWS Herd Overview cache in background so initial UI requests are instantaneous
+    async def prewarm_caches():
+        await asyncio.sleep(1)
+        try:
+            from app.services.aws_service import AwsTelemetryService
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, AwsTelemetryService.get_herd_overview_items)
+            logger.info("AWS Herd Overview cache pre-warmed successfully.")
+        except Exception as e:
+            logger.warning(f"Error pre-warming AWS cache: {e}")
+
+    asyncio.create_task(prewarm_caches())
+
     yield
     
     # Shutdown: cancel worker
@@ -130,6 +143,7 @@ app.include_router(cows_router, prefix=f"{settings.API_V1_STR}/cows", tags=["Cat
 app.include_router(hardware_router, prefix=f"{settings.API_V1_STR}", tags=["Hardware Specs"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_api_router, prefix="/api/admin", tags=["Admin Management"])
+app.include_router(admin_api_router, prefix="/api", tags=["Tag Registry"])
 app.include_router(config_router, prefix="/api/config", tags=["Configuration"])
 
 

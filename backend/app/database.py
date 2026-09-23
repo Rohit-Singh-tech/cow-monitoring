@@ -10,11 +10,11 @@ if db_url.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 else:
     engine_kwargs.update({
-        "pool_size": 3,
-        "max_overflow": 2,
+        "pool_size": 10,
+        "max_overflow": 10,
         "pool_pre_ping": True,
         "pool_recycle": 1800,
-        "pool_timeout": 10,  # Fail fast instead of hanging 30s
+        "pool_timeout": 30,
     })
 
 engine = create_engine(db_url, **engine_kwargs)
@@ -24,7 +24,7 @@ if not db_url.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def set_pg_timeout(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
-        cursor.execute("SET statement_timeout = '15000'")  # 15 second max per query
+        cursor.execute("SET statement_timeout = '30000'")  # 30 second max per query
         cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
