@@ -91,12 +91,15 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning(f"DB prewarm error: {e}")
                 
-                # 2. Warm AWS items and default AWS cow 8
+                # 2. Warm AWS items and all enabled AWS cows in parallel
                 try:
+                    from concurrent.futures import ThreadPoolExecutor
                     AwsTelemetryService.get_herd_overview_items()
-                    AwsTelemetryService.get_live_dashboard("8")
+                    with ThreadPoolExecutor(max_workers=4) as executor:
+                        list(executor.map(AwsTelemetryService.get_live_dashboard, settings.AWS_ENABLED_DEVICE_IDS))
                     AwsTelemetryService.get_7day_activity("8")
                     AwsTelemetryService.get_activity_logs("8")
+                    logger.info(f"Pre-warmed live dashboards for AWS devices: {settings.AWS_ENABLED_DEVICE_IDS}")
                 except Exception as e:
                     logger.warning(f"AWS prewarm error: {e}")
 

@@ -76,8 +76,10 @@ def _load_snapshot():
                 _AWS_CACHE[f"7day_{dev_id}"] = {"expires_at": now, "data": d}
             for dev_id, l in _LAST_VALID_LOGS.items():
                 _AWS_CACHE[f"actlogs_{dev_id}"] = {"expires_at": now, "data": l}
+            today_str = datetime.now(timezone.utc).strftime("%d-%m-%Y")
             for dev_id, dash in _LAST_VALID_DASHBOARD.items():
-                _AWS_CACHE[f"live_{dev_id}_{dash.get('target', '')}"] = {"expires_at": now, "data": dash}
+                _AWS_CACHE[f"live_{dev_id}_{today_str}"] = {"expires_at": now + 600, "data": dash}
+                _AWS_CACHE[f"live_{dev_id}_"] = {"expires_at": now + 600, "data": dash}
         logger.info(f"Loaded persistent AWS telemetry snapshot for {len(_LAST_VALID_DASHBOARD)} devices.")
     except Exception as e:
         logger.warning(f"Error loading AWS telemetry snapshot: {e}")
@@ -91,6 +93,17 @@ _HERD_IS_REFRESHING = False
 _REFRESH_THREAD_LOCK = threading.Lock()
 _TAGS_LOADED_AT = 0.0
 CACHE_TTL_SECONDS = 300
+
+# Per-device locks to coalesce concurrent in-flight requests and prevent duplicate AWS calls
+_IN_FLIGHT_DEVICE_LOCKS: Dict[str, threading.Lock] = {}
+_GLOBAL_LOCK = threading.Lock()
+
+def _get_device_lock(dev_id: str) -> threading.Lock:
+    with _GLOBAL_LOCK:
+        dev_key = str(dev_id).strip()
+        if dev_key not in _IN_FLIGHT_DEVICE_LOCKS:
+            _IN_FLIGHT_DEVICE_LOCKS[dev_key] = threading.Lock()
+        return _IN_FLIGHT_DEVICE_LOCKS[dev_key]
 
 # Load persistent snapshot immediately on module load
 _load_snapshot()
@@ -238,48 +251,54 @@ class AwsTelemetryService:
         if cached and cached["expires_at"] > time.time():
             return cached["data"]
 
-        raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date)
-        if not raw_packets:
-            return []
+        with _get_device_lock(str(device_id).strip()):
+            # Re-check cache after acquiring lock
+            cached = _AWS_CACHE.get(cache_key)
+            if cached and cached["expires_at"] > time.time():
+                return cached["data"]
 
-        manager = get_ml_manager()
-        processed = []
+            raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date)
+            if not raw_packets:
+                return []
 
-        for pkt in raw_packets:
-            raw_pts = pkt.get("Data", [])
-            if len(raw_pts) < 3:
-                continue
+            manager = get_ml_manager()
+            processed = []
 
-            dt = _parse_timestamp(pkt)
-            epoch_val = int(pkt.get("Epoch", dt.timestamp()))
-            pred_cache_key = f"{device_id}_{epoch_val}_{len(raw_pts)}"
+            for pkt in raw_packets:
+                raw_pts = pkt.get("Data", [])
+                if len(raw_pts) < 3:
+                    continue
 
-            x_buf = [float(raw_pts[j]) for j in range(0, len(raw_pts), 3)]
-            y_buf = [float(raw_pts[j+1]) for j in range(0, len(raw_pts), 3)]
-            z_buf = [float(raw_pts[j+2]) for j in range(0, len(raw_pts), 3)]
+                dt = _parse_timestamp(pkt)
+                epoch_val = int(pkt.get("Epoch", dt.timestamp()))
+                pred_cache_key = f"{device_id}_{epoch_val}_{len(raw_pts)}"
 
-            # Check ML prediction memoization cache
-            if pred_cache_key in _ML_PREDICTION_CACHE:
-                pred = _ML_PREDICTION_CACHE[pred_cache_key]
-            else:
-                pred = manager.predict(x_buf, y_buf, z_buf)
-                _ML_PREDICTION_CACHE[pred_cache_key] = pred
+                x_buf = [float(raw_pts[j]) for j in range(0, len(raw_pts), 3)]
+                y_buf = [float(raw_pts[j+1]) for j in range(0, len(raw_pts), 3)]
+                z_buf = [float(raw_pts[j+2]) for j in range(0, len(raw_pts), 3)]
 
-            processed.append({
-                "device_id": str(device_id),
-                "timestamp": dt,
-                "epoch": epoch_val,
-                "x_buf": x_buf,
-                "y_buf": y_buf,
-                "z_buf": z_buf,
-                "ml_inference": pred
-            })
+                # Check ML prediction memoization cache
+                if pred_cache_key in _ML_PREDICTION_CACHE:
+                    pred = _ML_PREDICTION_CACHE[pred_cache_key]
+                else:
+                    pred = manager.predict(x_buf, y_buf, z_buf)
+                    _ML_PREDICTION_CACHE[pred_cache_key] = pred
 
-        _AWS_CACHE[cache_key] = {
-            "expires_at": time.time() + CACHE_TTL_SECONDS,
-            "data": processed
-        }
-        return processed
+                processed.append({
+                    "device_id": str(device_id),
+                    "timestamp": dt,
+                    "epoch": epoch_val,
+                    "x_buf": x_buf,
+                    "y_buf": y_buf,
+                    "z_buf": z_buf,
+                    "ml_inference": pred
+                })
+
+            _AWS_CACHE[cache_key] = {
+                "expires_at": time.time() + CACHE_TTL_SECONDS,
+                "data": processed
+            }
+            return processed
 
     @classmethod
     def clear_cache(cls):

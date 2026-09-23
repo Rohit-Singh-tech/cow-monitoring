@@ -151,32 +151,6 @@ export default function App() {
     };
   }, [isAuthenticated]); // Removed activeTab — no need to refetch cow list on tab change
 
-  // 2. Load individual cow data when cow selection changes
-  useEffect(() => {
-    if (!currentCowId || !isAuthenticated) return;
-    let isSubscribed = true;
-
-    const loadCowData = async (cowId) => {
-      try {
-        const resCurr = await fetchWithTimeout(`${API_BASE}/api/cow/${cowId}/current`, {}, 15000);
-        if (!resCurr.ok) throw new Error(`HTTP ${resCurr.status}`);
-        const dataCurr = await resCurr.json();
-        if (isSubscribed && dataCurr.success) {
-          setCurrentData(dataCurr);
-          if (dataCurr.accelBuffer) setAccelBuffer(dataCurr.accelBuffer);
-          syncCowIntoList(dataCurr);
-        }
-      } catch (err) {
-        console.error('Error loading cow data:', err);
-      }
-    };
-
-    loadCowData(currentCowId);
-
-    return () => {
-      isSubscribed = false;
-    };
-  }, [currentCowId, isAuthenticated]);
 
   // Load 7-day & logs only if on 7day tab — fetch both in parallel for speed
   // Uses stale-while-revalidate: backend returns instantly (empty on first cold call),
@@ -222,18 +196,21 @@ export default function App() {
     };
   }, [currentCowId, activeTab, isAuthenticated]);
 
-  // 3. Real-time Telemetry Stream Loop (15s interval, with in-flight guard + error backoff)
+  // 2. Real-time Telemetry Stream Loop (with in-flight guard + error backoff)
   useEffect(() => {
     if (!currentCowId || activeTab !== 'live' || !isAuthenticated) return;
 
     let isSubscribed = true;
+    const isAws = currentCowId && String(currentCowId).startsWith('aws-');
+    // Generous 25s timeout for AWS cloud API to prevent premature AbortError
+    const timeoutVal = isAws ? 25000 : 12000;
 
     const fetchLive = async () => {
       if (liveFetchingRef.current) return;
       liveFetchingRef.current = true;
 
       try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/current`, {}, 10000);
+        const res = await fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/current`, {}, timeoutVal);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (isSubscribed && data.success) {
@@ -249,10 +226,9 @@ export default function App() {
       }
     };
 
-    // Dynamic interval: AWS devices poll every 30s (slow API), DB devices every 15s
+    // Dynamic interval: AWS devices poll every 30s (cloud API), DB devices every 15s
     const getInterval = () => {
       const errorCount = liveErrorCountRef.current;
-      const isAws = currentCowId && String(currentCowId).startsWith('aws-');
       const baseInterval = isAws ? 30000 : 15000;
       if (errorCount === 0) return baseInterval;
       if (errorCount < 3) return baseInterval * 2;
@@ -278,11 +254,34 @@ export default function App() {
 
   const handleSelectCow = (id) => {
     setCurrentCowId(id);
-    setAccelBuffer({ x: [], y: [], z: [], mag: [], labels: [] });
-    setCurrentData(null);
     setData7Day(null);
     setLogs([]);
     liveErrorCountRef.current = 0; // Reset error backoff on cow switch
+
+    // Seed immediately with existing metadata from cow list so the UI stays responsive
+    const existingCow = cows.find(c => String(c.id) === String(id));
+    if (existingCow) {
+      setCurrentData(prev => ({
+        ...(prev || {}),
+        ...existingCow,
+        cowId: existingCow.id,
+        device_id: existingCow.device_id,
+        cowName: existingCow.name,
+        tagNumber: existingCow.tagNumber,
+        breed: existingCow.breed,
+        location: existingCow.location,
+        weight: existingCow.weight,
+        currentActivity: { code: existingCow.currentActivity, name: existingCow.activityName || 'Standing Rest' },
+        healthStatus: {
+          ruminationHoursToday: existingCow.ruminationHoursToday || 0,
+          lyingHoursToday: existingCow.lyingHoursToday || 0,
+          feedingHoursToday: existingCow.feedingHoursToday || 0,
+          movingHoursToday: existingCow.movingHoursToday || 0,
+          estrusProbabilityPercent: existingCow.estrusProbability || 0,
+          health_risk_decision: existingCow.health_risk_decision || existingCow.healthStatus || 'HEALTHY'
+        }
+      }));
+    }
   };
 
   const handleTriggerDump = async () => {

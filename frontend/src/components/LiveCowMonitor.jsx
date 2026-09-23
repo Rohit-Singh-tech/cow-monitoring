@@ -35,8 +35,8 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
     return (
       <div className="glass-panel" style={{ padding: '3rem', textAlign: 'center' }}>
         <i className="fa-solid fa-satellite-dish fa-spin" style={{ fontSize: '2.5rem', color: 'var(--accent-emerald)', marginBottom: '1rem' }}></i>
-        <h3 style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)', fontWeight: 800 }}>INITIALIZING NEURAL LINK...</h3>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginTop: '0.5rem' }}>Awaiting live 10 Hz Bluetooth Low Energy data packets from livestock collar node.</p>
+        <h3 style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)', fontWeight: 800 }}>CONNECTING TO LIVESTOCK NODE...</h3>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginTop: '0.5rem' }}>Synchronizing real-time telemetry from collar sensor node.</p>
       </div>
     );
   }
