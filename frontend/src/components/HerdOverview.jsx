@@ -6,6 +6,7 @@ export default function HerdOverview({ cows, onSelectCow }) {
   const { activities } = useConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [healthFilter, setHealthFilter] = useState('ALL');
+  const [sourceFilter, setSourceFilter] = useState('ALL');
 
   if (!cows || cows.length === 0) {
     return (
@@ -26,7 +27,10 @@ export default function HerdOverview({ cows, onSelectCow }) {
     const status = cow.health_risk_decision || 'HEALTHY';
     const matchesHealth = healthFilter === 'ALL' || status === healthFilter;
 
-    return matchesSearch && matchesHealth;
+    const cowSource = cow.source || (String(cow.id).startsWith('aws-') ? 'aws_api' : 'render_db');
+    const matchesSource = sourceFilter === 'ALL' || cowSource === sourceFilter;
+
+    return matchesSearch && matchesHealth && matchesSource;
   });
 
   return (
@@ -39,7 +43,7 @@ export default function HerdOverview({ cows, onSelectCow }) {
             NODE DIRECTORY & CATTLE HERD REGISTRY
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.825rem', marginTop: '0.15rem' }}>
-            Real-time status across all collar-mounted IoT BLE sensor nodes (AWaDH IIT Ropar).
+            Real-time status across Render Database nodes and AWS Cloud IoT Collars.
           </p>
         </div>
 
@@ -50,8 +54,18 @@ export default function HerdOverview({ cows, onSelectCow }) {
             className="search-input-box"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ width: '220px' }}
+            style={{ width: '200px' }}
           />
+
+          <select
+            className="search-input-box"
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+          >
+            <option value="ALL">All Sources</option>
+            <option value="render_db">🗄️ Render Database</option>
+            <option value="aws_api">☁️ AWS Cloud Collars</option>
+          </select>
 
           <select
             className="search-input-box"
@@ -78,6 +92,7 @@ export default function HerdOverview({ cows, onSelectCow }) {
           filteredCows.map(cow => {
             const act = activities[cow.currentActivity] || activities['OTH'] || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' };
             const isCritical = cow.health_risk_decision === 'HIGH_RISK' || cow.health_risk_decision === 'ESTRUS_ALERT';
+            const isAws = cow.source === 'aws_api' || String(cow.id).startsWith('aws-');
 
             return (
               <div
@@ -90,7 +105,7 @@ export default function HerdOverview({ cows, onSelectCow }) {
                 <div>
                   <div className="cow-card-top">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%)', border: '1px solid rgba(52, 211, 153, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '3px', flexShrink: 0 }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: isAws ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.2) 100%)' : 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%)', border: isAws ? '1px solid rgba(251, 191, 36, 0.3)' : '1px solid rgba(52, 211, 153, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '3px', flexShrink: 0 }}>
                         <img src="/cow-logo.png" alt="Cow" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                       </div>
                       <div>
@@ -101,9 +116,18 @@ export default function HerdOverview({ cows, onSelectCow }) {
                       </div>
                     </div>
 
-                    <span className={`health-badge ${cow.health_risk_decision || 'NO_DATA'}`}>
-                      {cow.isStale ? 'NO DATA' : (cow.health_risk_decision || 'NO DATA').replace('_', ' ')}
-                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+                      <span className={`health-badge ${cow.health_risk_decision || 'NO_DATA'}`}>
+                        {cow.isStale ? 'NO DATA' : (cow.health_risk_decision || 'NO DATA').replace('_', ' ')}
+                      </span>
+                      <span className={`badge-source ${isAws ? 'aws' : 'db'}`}>
+                        {isAws ? (
+                          <><i className="fa-solid fa-cloud"></i> AWS Collar</>
+                        ) : (
+                          <><i className="fa-solid fa-database"></i> Render DB</>
+                        )}
+                      </span>
+                    </div>
                   </div>
 
                   <div style={{ margin: '0.9rem 0' }}>

@@ -154,15 +154,32 @@ def api_get_cow_7day(cow_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
 def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
-    """Activity log using pre-computed ML inferences — no live ML."""
+    """Activity log using pre-computed ML inferences or AWS API."""
+    from app.services.aws_service import AwsTelemetryService
+    from app.api.endpoints.cows import resolve_aws_device_id
+    
+    aws_dev = resolve_aws_device_id(cow_id)
+    if aws_dev:
+        return AwsTelemetryService.get_activity_logs(aws_dev, page=page, limit=limit)
+        
     from app.models.tag_registry import TagRegistry
     from app.models.datalogger import DataloggerHeader, MLInference
     from app.models.ui_parameter import ActivityConfig
     
-    if str(cow_id).isdigit():
-        cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
-    else:
-        cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+    cow = None
+    try:
+        if str(cow_id).isdigit():
+            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+        else:
+            cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+    except Exception:
+        pass
+
+    if not cow:
+        try:
+            return AwsTelemetryService.get_activity_logs(str(cow_id), page=page, limit=limit)
+        except Exception:
+            pass
         
     dev_id = cow.device_id if cow else str(cow_id)
     
@@ -268,7 +285,8 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
         "success": True,
         "logs": logs,
         "page": page,
-        "limit": limit
+        "limit": limit,
+        "source": "render_db"
     }
 
 @app.post("/api/ble/trigger-dump", tags=["Frontend Compatibility"])

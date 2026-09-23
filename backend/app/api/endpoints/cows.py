@@ -7,13 +7,30 @@ import math
 import logging
 
 from app.database import get_db
+from app.config import settings
 from app.models.tag_registry import TagRegistry
 from app.models.datalogger import DataloggerHeader, DataloggerPoint, MLInference, DailyCowSummary
 from app.ml.model_loader import get_ml_manager
+from app.services.aws_service import AwsTelemetryService
 
 logger = logging.getLogger("cow_logger.cows")
 
 router = APIRouter()
+
+def resolve_aws_device_id(cow_id: str) -> Optional[str]:
+    """
+    Checks if cow_id refers to an AWS Collar device.
+    Supports formats like 'aws-8', 'AWS-8', or direct numeric ID in AWS_ENABLED_DEVICE_IDS.
+    """
+    if not cow_id:
+        return None
+    s = str(cow_id).strip()
+    if s.lower().startswith("aws-"):
+        return s.split("-", 1)[1]
+    if s in settings.AWS_ENABLED_DEVICE_IDS:
+        return s
+    return None
+
 
 ACTIVITY_MAP = {
     "RES": {"code": "RES", "name": "Resting in standing position", "color": "#64748b", "icon": "fa-shoe-prints"},
@@ -128,101 +145,125 @@ def _build_health_status_from_inference(inference, summary=None):
 @router.get("", response_model=List[dict])
 def get_herd_overview(db: Session = Depends(get_db)):
     """
-    Herd overview: fully data-driven from database.
-    No hardcoded values. Shows 0 if no data in 24 hours.
-    Uses same health logic as individual cow view for consistency.
+    Herd overview: returns both Render Database devices and AWS CowNeck API devices.
+    Fully data-driven with source tracking.
     """
-    cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
-    if not cows:
-        return []
-
-    today = date.today()
-
-    # Batch-fetch today's daily summaries
-    all_summaries = db.query(DailyCowSummary).filter(
-        DailyCowSummary.date == today
-    ).all()
-    summaries_by_device = {s.device_id: s for s in all_summaries}
-
     result = []
-    for c in cows:
-        dev_id = str(c.device_id)
-        
-        # Get latest inference (same function used by live dashboard)
-        header, inference = _get_latest_inference_for_device(db, dev_id)
-        
-        ts = header.timestamp if header else None
-        stale = _is_device_stale(ts)
-        summary = summaries_by_device.get(dev_id)
-        
-        # Build health status — SAME logic as individual cow view
-        health = _build_health_status_from_inference(inference, summary)
-        
-        # If device is stale (no data in 24h), show 0 for all health params
-        if stale:
-            rum_hrs = 0.0
-            lying_hrs = 0.0
-            feed_hrs = 0.0
-            move_hrs = 0.0
-            act_code = None
-            health_risk = None  # null = no recent data
-            heat_prob_pct = 0
-        else:
-            rum_hrs = summary.rumination_hours if summary else 0.0
-            lying_hrs = summary.lying_hours if summary else 0.0
-            feed_hrs = summary.feeding_hours if summary else 0.0
-            move_hrs = summary.moving_hours if summary else 0.0
-            act_code = health["act_code"]
-            health_risk = health["health_risk"]
-            heat_prob_pct = health["heat_prob_pct"]
-        
-        act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
 
-        result.append({
-            "id": c.id,
-            "device_id": dev_id,
-            "tagNumber": f"TAG-{c.device_id}",
-            "name": c.name or f"Device #{c.device_id}",
-            "breed": c.breed or None,
-            "location": c.location or None,
-            "weight": f"{c.weight} kg" if c.weight else None,
-            "healthStatus": health_risk or "NO_DATA",
-            "health_risk_decision": health_risk or "NO_DATA",
-            "currentActivity": act_code,
-            "activityName": act_info["name"] if act_code else "No Recent Data",
-            "ruminationHoursToday": rum_hrs,
-            "lyingHoursToday": lying_hrs,
-            "feedingHoursToday": feed_hrs,
-            "movingHoursToday": move_hrs,
-            "estrusProbability": heat_prob_pct,
-            "lastSeen": ts.isoformat() if ts else None,
-            "isStale": stale,
-            "monitoredHoursToday": summary.monitored_hours if summary else 0.0
-        })
-        
+    # 1. Fetch Render Database cows
+    try:
+        cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
+        if cows:
+            today = date.today()
+            all_summaries = db.query(DailyCowSummary).filter(
+                DailyCowSummary.date == today
+            ).all()
+            summaries_by_device = {s.device_id: s for s in all_summaries}
+
+            for c in cows:
+                dev_id = str(c.device_id)
+                header, inference = _get_latest_inference_for_device(db, dev_id)
+                ts = header.timestamp if header else None
+                stale = _is_device_stale(ts)
+                summary = summaries_by_device.get(dev_id)
+                health = _build_health_status_from_inference(inference, summary)
+
+                if stale:
+                    rum_hrs = 0.0
+                    lying_hrs = 0.0
+                    feed_hrs = 0.0
+                    move_hrs = 0.0
+                    act_code = None
+                    health_risk = None
+                    heat_prob_pct = 0
+                else:
+                    rum_hrs = summary.rumination_hours if summary else 0.0
+                    lying_hrs = summary.lying_hours if summary else 0.0
+                    feed_hrs = summary.feeding_hours if summary else 0.0
+                    move_hrs = summary.moving_hours if summary else 0.0
+                    act_code = health["act_code"]
+                    health_risk = health["health_risk"]
+                    heat_prob_pct = health["heat_prob_pct"]
+
+                act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
+
+                result.append({
+                    "id": c.id,
+                    "device_id": dev_id,
+                    "source": "render_db",
+                    "tagNumber": f"TAG-{c.device_id}",
+                    "name": c.name or f"Device #{c.device_id}",
+                    "breed": c.breed or None,
+                    "location": c.location or None,
+                    "weight": f"{c.weight} kg" if c.weight else None,
+                    "healthStatus": health_risk or "NO_DATA",
+                    "health_risk_decision": health_risk or "NO_DATA",
+                    "currentActivity": act_code,
+                    "activityName": act_info["name"] if act_code else "No Recent Data",
+                    "ruminationHoursToday": rum_hrs,
+                    "lyingHoursToday": lying_hrs,
+                    "feedingHoursToday": feed_hrs,
+                    "movingHoursToday": move_hrs,
+                    "estrusProbability": heat_prob_pct,
+                    "lastSeen": ts.isoformat() if ts else None,
+                    "isStale": stale,
+                    "monitoredHoursToday": summary.monitored_hours if summary else 0.0
+                })
+    except Exception as e:
+        logger.warning(f"Error querying database cows for herd overview: {e}")
+
+    # 2. Fetch AWS Cloud Collar devices
+    try:
+        aws_items = AwsTelemetryService.get_herd_overview_items()
+        result.extend(aws_items)
+    except Exception as e:
+        logger.error(f"Error querying AWS herd overview items: {e}")
+
     return result
 
 
 @router.get("/{cow_id}/live")
 def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     """
-    Live dashboard: fully data-driven.
-    Uses SAME health logic as herd overview for consistency.
-    Falls back to live ML only if no cached inference exists.
-    Shows 0 if device has no data in 24 hours.
+    Live dashboard: routes to AWS Telemetry Service if cow_id is an AWS device,
+    otherwise uses the Render database logic.
     """
+    # Check if requested node is an AWS device
+    aws_dev = resolve_aws_device_id(cow_id)
+    if aws_dev:
+        return AwsTelemetryService.get_live_dashboard(aws_dev)
+
     cow = None
-    if str(cow_id).isdigit():
-        cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+    try:
+        if str(cow_id).isdigit():
+            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+            
+        if not cow:
+            cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+    except Exception as e:
+        logger.warning(f"Database lookup error for cow {cow_id}: {e}")
         
     if not cow:
-        cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+        # Check if cow_id can be resolved via AWS directly
+        try:
+            aws_dash = AwsTelemetryService.get_live_dashboard(str(cow_id))
+            if aws_dash and not aws_dash.get("isStale"):
+                return aws_dash
+        except Exception:
+            pass
+
+        try:
+            cow = db.query(TagRegistry).first()
+        except Exception:
+            pass
         
     if not cow:
-        cow = db.query(TagRegistry).first()
-        
-    if not cow:
-        raise HTTPException(status_code=404, detail="No cattle nodes registered in database tag_registry.")
+        # Final fallback to default AWS Device 8
+        try:
+            return AwsTelemetryService.get_live_dashboard("8")
+        except Exception:
+            pass
+        raise HTTPException(status_code=404, detail="No cattle nodes registered in database or AWS.")
 
     dev_id = str(cow.device_id)
     today = date.today()
@@ -342,6 +383,7 @@ def get_cow_live_dashboard(cow_id: str, db: Session = Depends(get_db)):
     return {
         "cowId": cow.id,
         "device_id": dev_id,
+        "source": "render_db",
         "cowName": cow.name or f"Device #{cow.device_id}",
         "tagNumber": f"TAG-{cow.device_id}",
         "breed": cow.breed or None,
@@ -431,13 +473,27 @@ def _generate_recommendation(health_risk, is_heat, ml_res, stale):
 @router.get("/{cow_id}/activity-7day")
 def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     """
-    7-day behavior trends from pre-computed daily summaries.
+    7-day behavior trends from pre-computed daily summaries or AWS API.
     Fully data-driven: shows actual ML-computed values.
     """
-    if str(cow_id).isdigit():
-        cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
-    else:
-        cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+    aws_dev = resolve_aws_device_id(cow_id)
+    if aws_dev:
+        return AwsTelemetryService.get_7day_activity(aws_dev)
+
+    cow = None
+    try:
+        if str(cow_id).isdigit():
+            cow = db.query(TagRegistry).filter(TagRegistry.id == int(cow_id)).first()
+        else:
+            cow = db.query(TagRegistry).filter(TagRegistry.device_id == str(cow_id)).first()
+    except Exception as e:
+        logger.warning(f"DB lookup error in 7day for cow {cow_id}: {e}")
+
+    if not cow:
+        try:
+            return AwsTelemetryService.get_7day_activity(str(cow_id))
+        except Exception:
+            pass
         
     dev_id = cow.device_id if cow else str(cow_id)
 
@@ -522,6 +578,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     return {
         "cowId": cow_id,
         "device_id": str(dev_id),
+        "source": "render_db",
         "days": days,
         "dates": dates,
         "ruminationHours": rum_list,

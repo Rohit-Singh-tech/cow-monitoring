@@ -28,7 +28,17 @@ class Settings(BaseSettings):
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "cow_ml_models"))
     )
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # AWS CowNeck API Settings
+    AWS_COWNECK_API_URL: str = os.getenv(
+        "AWS_COWNECK_API_URL",
+        "https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function"
+    )
+    AWS_ENABLED_DEVICE_IDS: List[str] = ["8", "7", "9", "1", "3", "4", "5", "6"]
+
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(os.path.dirname(__file__), "..", ".env"), 
+        extra="ignore"
+    )
 
     @property
     def sqlalchemy_database_url(self) -> str:

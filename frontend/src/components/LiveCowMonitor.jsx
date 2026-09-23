@@ -229,6 +229,13 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             <h2>{currentData.cowName || `Device #${currentData.device_id}`} <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem', fontWeight: 700 }}>({currentData.tagNumber || `TAG-${currentData.device_id}`})</span></h2>
             <div className="cow-meta-badges">
               <span className="meta-chip"><i className="fa-solid fa-microchip" style={{ marginRight: '0.35rem', color: 'var(--accent-sky)' }}></i>Node: {currentData.device_id}</span>
+              <span className={`meta-chip source-chip ${currentData.source === 'aws_api' || String(currentData.cowId || '').startsWith('aws-') ? 'aws' : 'db'}`}>
+                {currentData.source === 'aws_api' || String(currentData.cowId || '').startsWith('aws-') ? (
+                  <><i className="fa-solid fa-cloud" style={{ marginRight: '0.35rem', color: '#F59E0B' }}></i>AWS CowNeck API</>
+                ) : (
+                  <><i className="fa-solid fa-database" style={{ marginRight: '0.35rem', color: '#38BDF8' }}></i>Render Database</>
+                )}
+              </span>
               {currentData.breed && <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>}
               <span className={`health-badge ${healthDecision}`}>
                 {currentData.isStale ? 'NO DATA' : String(healthDecision).replace('_', ' ')}

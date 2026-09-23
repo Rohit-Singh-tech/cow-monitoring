@@ -46,11 +46,15 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
               value={currentCowId}
               onChange={(e) => onSelectCow(e.target.value)}
             >
-              {cows.map((c) => (
-                <option key={c.id} value={c.id}>
-                  NODE #{c.device_id} - {c.name} [{(c.health_risk_decision || 'HEALTHY').replace('_', ' ')}]
-                </option>
-              ))}
+              {cows.map((c) => {
+                const srcTag = c.source === 'aws_api' ? '☁️ AWS' : '🗄️ DB';
+                const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
+                return (
+                  <option key={c.id} value={c.id}>
+                    [{srcTag}] NODE #{c.device_id} - {c.name} [{healthTag}]
+                  </option>
+                );
+              })}
             </select>
           </div>
 

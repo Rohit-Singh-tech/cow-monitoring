@@ -27,7 +27,13 @@ The backend utilizes pre-trained machine learning models to decode raw 10Hz XYZ 
 
 The backend is built with FastAPI and organized into several routers based on system functionality.
 
-### Ingestion API (Hardware Layer)
+### Ingestion API & Dual-Source Telemetry (Hardware Layer)
+*   **Dual-Source Architecture**:
+    *   **Source 1: Render Database (`render_db`)**: Telemetry headers and points stored in PostgreSQL/SQLite (`datalogger_headers` and `datalogger_points`), queried by node number or hardware tag ID.
+    *   **Source 2: AWS Cloud IoT Gateway API (`aws_api`)**: Live telematics from AWS Lambda (`CowNeck_API_Function?deviceid={id}&startdate={start}&enddate={end}`).
+        *   Telemetry payload: 240 string integers representing 80 sequential readings of $X, Y, Z$ at 10 Hz (8-second window).
+        *   Integrated via `AwsTelemetryService` with gzip decompression and 60-second TTL caching.
+        *   Feeds directly into `MLModelManager` for real-time inference (RUS, REL, MOV, FEP), heat probability, and anomaly scoring.
 *   **`POST /api/ingest/raw`**: Bulk ingestion endpoint for the Dataloggers. Accepts arrays of raw XYZ packets, saves them to SQLite/PostgreSQL, and triggers background ML inference via Celery/BackgroundTasks.
 *   **`POST /api/ingest/packet`**: Ingests a single packet of telemetry data.
 *   **`POST /api/ingest/predict`**: Pure inference endpoint. Takes raw data, extracts features, runs all ML models, and returns classifications without persisting data to the DB.
@@ -81,9 +87,11 @@ Visualizes historical trends and transition timelines.
 
 ### Screen 3: Herd Overview (`HerdOverview.jsx`)
 A macro-level view of the entire farm.
+*   **Source Filter**: Filter by `All Sources`, `🗄️ Render Database`, or `☁️ AWS Cloud Collars`.
 *   **KPI Banners**: Total Monitored Cows, High Risk Nodes, Heat Alerts Active, and Herd Average Rumination.
-*   **Herd Roster Table**: 
-    *   **Parameters**: Node/Tag ID, Live Status (Active/Inactive), Heartbeat timestamp, Current ML Inference, Health Status (Healthy, Warning, High Risk), and Battery Voltage.
+*   **Herd Roster Table & Cards**: 
+    *   **Parameters**: Node/Tag ID, Source Badge (`🗄️ RENDER DB` / `☁️ AWS COLLAR`), Live Status (Active/Inactive), Heartbeat timestamp, Current ML Inference, Health Status (Healthy, Warning, High Risk), and Battery Voltage.
+*   **Global Navbar**: Includes source prefixes (`[☁️ AWS]` vs `[🗄️ DB]`) in the target cow dropdown selector.
 
 ### Screen 4: Hardware Specs & Admin
 *   **`HardwareSpecs.jsx`**: Displays technical architecture diagrams, PCB board layouts, and hardware engineering specifications of the physical dataloggers.
