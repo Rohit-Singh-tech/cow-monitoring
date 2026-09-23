@@ -65,9 +65,32 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"success": True, "message": "User deleted successfully"}
 
+import time
+
+_TAGS_CACHE = {"expires_at": 0.0, "data": []}
+
+def invalidate_tags_cache():
+    global _TAGS_CACHE
+    _TAGS_CACHE = {"expires_at": 0.0, "data": []}
+    try:
+        from app.api.endpoints.cows import clear_db_cow_caches
+        clear_db_cow_caches()
+    except Exception:
+        pass
+    try:
+        from app.services.aws_service import AwsTelemetryService
+        AwsTelemetryService.clear_cache()
+    except Exception:
+        pass
+
 @router.get("/tags")
 def get_tags(db: Session = Depends(get_db)):
-    """Fetch all registered cow tags/devices from TagRegistry."""
+    """Fetch all registered cow tags/devices from TagRegistry with fast 60s caching."""
+    global _TAGS_CACHE
+    now_ts = time.time()
+    if _TAGS_CACHE.get("expires_at", 0) > now_ts and _TAGS_CACHE.get("data"):
+        return {"success": True, "tags": _TAGS_CACHE["data"]}
+
     tags = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
     items = []
     for t in tags:
@@ -82,6 +105,7 @@ def get_tags(db: Session = Depends(get_db)):
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "updated_at": t.updated_at.isoformat() if t.updated_at else None
         })
+    _TAGS_CACHE = {"expires_at": now_ts + 60.0, "data": items}
     return {"success": True, "tags": items}
 
 @router.post("/tags")
@@ -117,12 +141,7 @@ def create_or_upsert_tag(request: TagCreateRequest, db: Session = Depends(get_db
     db.commit()
     db.refresh(tag)
 
-    # Invalidate AWS metadata & herd overview cache immediately
-    try:
-        from app.services.aws_service import AwsTelemetryService
-        AwsTelemetryService.clear_cache()
-    except Exception:
-        pass
+    invalidate_tags_cache()
 
     return {
         "success": True, 
@@ -175,12 +194,7 @@ def update_tag(identifier: str, request: TagUpdateRequest, db: Session = Depends
     db.commit()
     db.refresh(tag)
 
-    # Invalidate AWS metadata & herd overview cache
-    try:
-        from app.services.aws_service import AwsTelemetryService
-        AwsTelemetryService.clear_cache()
-    except Exception:
-        pass
+    invalidate_tags_cache()
 
     return {
         "success": True,
@@ -211,11 +225,7 @@ def delete_tag(identifier: str, db: Session = Depends(get_db)):
     db.delete(tag)
     db.commit()
 
-    try:
-        from app.services.aws_service import AwsTelemetryService
-        AwsTelemetryService.clear_cache()
-    except Exception:
-        pass
+    invalidate_tags_cache()
 
     return {"success": True, "message": "Tag deleted successfully"}
 

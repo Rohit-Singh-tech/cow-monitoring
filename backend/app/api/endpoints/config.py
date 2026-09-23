@@ -21,13 +21,12 @@ DEFAULT_ACTIVITIES_MAP = {
     "OTH": {"code": "OTH", "name": "Other", "color": "#94a3b8", "icon": "fa-question", "category": "Normal"}
 }
 
-_ACTIVITIES_CACHE = None
+_ACTIVITIES_CACHE = dict(DEFAULT_ACTIVITIES_MAP)
 
 @router.get("/activities")
-def get_activities(db: Session = Depends(get_db)):
+def get_activities():
     global _ACTIVITIES_CACHE
-    if _ACTIVITIES_CACHE:
-        return {"success": True, "activities": _ACTIVITIES_CACHE}
+    return {"success": True, "activities": _ACTIVITIES_CACHE}
 
     try:
         configs = db.query(ActivityConfig).all()

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Optional
 from fastapi import FastAPI, Depends
 from fastapi.responses import RedirectResponse
@@ -23,6 +24,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cow_logger.main")
+
+_DB_ACT_LOGS_CACHE = {}  # {cache_key: {"expires_at": float, "data": dict}}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -65,16 +68,42 @@ async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(run_inference_loop())
     logger.info("Background ML inference worker started.")
 
-    # Pre-warm AWS Herd Overview cache in background so initial UI requests are instantaneous
+    # Pre-warm all backend caches so initial UI requests are instantaneous (<50ms)
     async def prewarm_caches():
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         try:
             from app.services.aws_service import AwsTelemetryService
+            from app.api.endpoints.admin_api import get_tags
+            from app.api.endpoints.config import get_activities
+            from app.database import SessionLocal
+            
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, AwsTelemetryService.get_herd_overview_items)
-            logger.info("AWS Herd Overview cache pre-warmed successfully.")
+            
+            def run_warm():
+                # 1. Warm DB tags and herd overview
+                try:
+                    with SessionLocal() as db:
+                        get_tags(db)
+                        get_herd_overview(db)
+                        # Warm default DB cow 17
+                        get_cow_live_dashboard("17", db=db)
+                        get_cow_7day_activity("17", db=db)
+                except Exception as e:
+                    logger.warning(f"DB prewarm error: {e}")
+                
+                # 2. Warm AWS items and default AWS cow 8
+                try:
+                    AwsTelemetryService.get_herd_overview_items()
+                    AwsTelemetryService.get_live_dashboard("8")
+                    AwsTelemetryService.get_7day_activity("8")
+                    AwsTelemetryService.get_activity_logs("8")
+                except Exception as e:
+                    logger.warning(f"AWS prewarm error: {e}")
+
+            await loop.run_in_executor(None, run_warm)
+            logger.info("All backend caches pre-warmed successfully. Instant API responses ready.")
         except Exception as e:
-            logger.warning(f"Error pre-warming AWS cache: {e}")
+            logger.warning(f"Error pre-warming caches: {e}")
 
     asyncio.create_task(prewarm_caches())
 
@@ -176,11 +205,14 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     aws_dev = resolve_aws_device_id(cow_id)
     if aws_dev:
         return AwsTelemetryService.get_activity_logs(aws_dev, page=page, limit=limit)
+
+    # Check fast cache FIRST before any DB queries (180s TTL)
+    cache_key = f"{cow_id}_{page}_{limit}"
+    now_ts = time.time()
+    cached = _DB_ACT_LOGS_CACHE.get(cache_key)
+    if cached and cached.get("expires_at", 0) > now_ts:
+        return cached["data"]
         
-    from app.models.tag_registry import TagRegistry
-    from app.models.datalogger import DataloggerHeader, MLInference
-    from app.models.ui_parameter import ActivityConfig
-    
     cow = resolve_db_cow(cow_id, db)
     if not cow:
         try:
@@ -189,6 +221,13 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
             pass
         
     dev_id = cow.device_id if cow else str(cow_id)
+    dev_cache_key = f"{dev_id}_{page}_{limit}"
+    cached = _DB_ACT_LOGS_CACHE.get(dev_cache_key)
+    if cached and cached.get("expires_at", 0) > now_ts:
+        return cached["data"]
+
+    from app.models.datalogger import DataloggerHeader, MLInference
+    from app.api.endpoints.config import DEFAULT_ACTIVITIES_MAP
     
     # Get paginated headers with their pre-computed ML inferences in ONE query
     from datetime import datetime, timedelta, timezone
@@ -201,7 +240,9 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     ).order_by(DataloggerHeader.timestamp.asc()).all()
     
     if not headers:
-        return {"success": True, "logs": [], "page": page, "limit": limit}
+        empty_res = {"success": True, "logs": [], "page": page, "limit": limit}
+        _DB_ACT_LOGS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": empty_res}
+        return empty_res
     
     # Batch fetch ML inferences for all headers
     header_ids = [h.id for h in headers]
@@ -210,9 +251,8 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     ).all()
     inf_by_header = {inf.header_id: inf for inf in inferences}
     
-    # Get activity config for display
-    configs = db.query(ActivityConfig).all()
-    ACTIVITY_CFG = {cfg.code: {"name": cfg.name, "color": cfg.color, "category": cfg.category} for cfg in configs}
+    # Use cached activity map (avoids extra DB query)
+    ACTIVITY_CFG = DEFAULT_ACTIVITIES_MAP
     
     grouped_logs = []
     current_group = None
@@ -286,18 +326,32 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     start_idx = (page - 1) * limit
     paged_logs = grouped_logs[start_idx : start_idx + limit]
     
-    logs = paged_logs
-        
-    return {
+    logs_payload = {
         "success": True,
-        "logs": logs,
+        "logs": paged_logs,
         "page": page,
         "limit": limit,
         "source": "render_db"
     }
+    _DB_ACT_LOGS_CACHE[cache_key] = {
+        "expires_at": time.time() + 180.0,
+        "data": logs_payload
+    }
+    _DB_ACT_LOGS_CACHE[dev_cache_key] = {
+        "expires_at": time.time() + 180.0,
+        "data": logs_payload
+    }
+    return logs_payload
 
 @app.post("/api/ble/trigger-dump", tags=["Frontend Compatibility"])
 def api_trigger_ble_dump(payload: dict = {}):
+    global _DB_ACT_LOGS_CACHE
+    _DB_ACT_LOGS_CACHE.clear()
+    try:
+        from app.api.endpoints.cows import clear_db_cow_caches
+        clear_db_cow_caches()
+    except Exception:
+        pass
     return {
         "success": True,
         "message": "Authorized Knock-Knock Trigger (0x59 0x00 0xBB 0xCC) sent. Replaying 2,500 SPI Flash packets."

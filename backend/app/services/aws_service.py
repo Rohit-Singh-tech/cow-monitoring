@@ -298,6 +298,12 @@ class AwsTelemetryService:
         """
         now = datetime.now(timezone.utc)
         target = target_date or now.strftime("%d-%m-%Y")
+
+        cache_key = f"live_{device_id}_{target}"
+        cached = _AWS_CACHE.get(cache_key)
+        if cached and cached.get("expires_at", 0) > time.time():
+            return cached["data"]
+
         packets = cls.get_processed_packets(device_id, start_date=target, end_date=target)
 
         # Fallback to yesterday's 24h window if today has no packets and no explicit target was forced
@@ -309,7 +315,7 @@ class AwsTelemetryService:
 
         if not packets:
             now = datetime.now(timezone.utc)
-            return {
+            empty_res = {
                 "cowId": f"aws-{device_id}",
                 "device_id": str(device_id),
                 "source": "aws_api",
@@ -348,6 +354,8 @@ class AwsTelemetryService:
                     "health_risk_decision": "NO_DATA"
                 }
             }
+            _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": empty_res}
+            return empty_res
 
         # Latest packet is the last one in the sorted list
         latest = packets[-1]
@@ -420,7 +428,7 @@ class AwsTelemetryService:
         mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
         labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
 
-        return {
+        live_payload = {
             "cowId": f"aws-{device_id}",
             "device_id": str(device_id),
             "source": "aws_api",
@@ -465,6 +473,8 @@ class AwsTelemetryService:
             },
             "ml_inference": latest_ml
         }
+        _AWS_CACHE[cache_key] = {"expires_at": time.time() + 30.0, "data": live_payload}
+        return live_payload
 
     @classmethod
     def get_7day_activity(cls, device_id: str) -> dict:

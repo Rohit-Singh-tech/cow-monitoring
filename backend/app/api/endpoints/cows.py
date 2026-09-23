@@ -50,20 +50,33 @@ ACTIVITY_MAP = {
 STALENESS_HOURS = 24
 
 
+# Cache structures for sub-second responses
+_DB_COW_CURRENT_CACHE = {}  # {dev_id: {"expires_at": float, "data": dict}}
+_DB_COW_7DAY_CACHE = {}     # {dev_id: {"expires_at": float, "data": dict}}
+
+def clear_db_cow_caches(device_id: Optional[str] = None):
+    """Invalidate DB cow caches when new data is ingested or tags modified."""
+    global _DB_COW_CURRENT_CACHE, _DB_COW_7DAY_CACHE, _DB_HERD_CACHE
+    if device_id:
+        _DB_COW_CURRENT_CACHE.pop(str(device_id), None)
+        _DB_COW_7DAY_CACHE.pop(str(device_id), None)
+    else:
+        _DB_COW_CURRENT_CACHE.clear()
+        _DB_COW_7DAY_CACHE.clear()
+    _DB_HERD_CACHE = {"expires_at": 0.0, "data": []}
+
 def _get_latest_inference_for_device(db: Session, device_id: str):
     """
-    Get the latest ML inference for a device by joining latest header to ml_inferences.
+    Get the latest ML inference for a device with a single index-optimized query.
     Returns (header, inference) tuple. Both may be None.
     """
-    max_id = db.query(func.max(DataloggerHeader.id)).filter(
+    header = db.query(DataloggerHeader).filter(
         DataloggerHeader.device_id == str(device_id)
-    ).scalar()
+    ).order_by(DataloggerHeader.id.desc()).first()
     
-    if not max_id:
+    if not header:
         return None, None
         
-    header = db.query(DataloggerHeader).filter(DataloggerHeader.id == max_id).first()
-    
     inference = db.query(MLInference).filter(
         MLInference.header_id == header.id
     ).first()
@@ -313,6 +326,12 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     if aws_dev:
         return AwsTelemetryService.get_live_dashboard(aws_dev, target_date=target_date)
 
+    # Check cache FIRST before any DB queries
+    now_ts = time.time()
+    cache_entry = _DB_COW_CURRENT_CACHE.get(str(cow_id))
+    if cache_entry and cache_entry["expires_at"] > now_ts:
+        return cache_entry["data"]
+
     cow = resolve_db_cow(cow_id, db)
         
     if not cow:
@@ -338,6 +357,11 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         raise HTTPException(status_code=404, detail="No cattle nodes registered in database or AWS.")
 
     dev_id = str(cow.device_id)
+    now_ts = time.time()
+    cache_entry = _DB_COW_CURRENT_CACHE.get(dev_id)
+    if cache_entry and cache_entry["expires_at"] > now_ts:
+        return cache_entry["data"]
+
     today = date.today()
 
     # Get today's pre-computed daily summary
@@ -355,13 +379,13 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     # Get accelerometer points for the latest header
     x_buf, y_buf, z_buf = [], [], []
     if header:
-        points = db.query(DataloggerPoint).filter(
+        pt_rows = db.query(DataloggerPoint.x, DataloggerPoint.y, DataloggerPoint.z).filter(
             DataloggerPoint.header_id == header.id
         ).order_by(DataloggerPoint.point_index.asc()).all()
         
-        x_buf = [p.x for p in points if p.x is not None]
-        y_buf = [p.y for p in points if p.y is not None]
-        z_buf = [p.z for p in points if p.z is not None]
+        x_buf = [r[0] for r in pt_rows if r[0] is not None]
+        y_buf = [r[1] for r in pt_rows if r[1] is not None]
+        z_buf = [r[2] for r in pt_rows if r[2] is not None]
 
     # Build ML result
     ml_res = None
@@ -452,7 +476,7 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
 
-    return {
+    res_data = {
         "cowId": str(cow.device_id),
         "device_id": dev_id,
         "source": "gatewayless",
@@ -497,6 +521,15 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         },
         "ml_inference": ml_res
     }
+    _DB_COW_CURRENT_CACHE[str(dev_id)] = {
+        "expires_at": time.time() + 45.0,
+        "data": res_data
+    }
+    _DB_COW_CURRENT_CACHE[str(cow_id)] = {
+        "expires_at": time.time() + 45.0,
+        "data": res_data
+    }
+    return res_data
 
 
 def _generate_recommendation(health_risk, is_heat, ml_res, stale):
@@ -552,6 +585,12 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     if aws_dev:
         return AwsTelemetryService.get_7day_activity(aws_dev)
 
+    # Check fast cache FIRST before any DB lookups (10 min TTL)
+    now_ts = time.time()
+    cached_7day = _DB_COW_7DAY_CACHE.get(str(cow_id))
+    if cached_7day and cached_7day["expires_at"] > now_ts:
+        return cached_7day["data"]
+
     cow = resolve_db_cow(cow_id, db)
     if not cow:
         clean_id = str(cow_id).strip().lower().replace("aws-", "")
@@ -566,6 +605,11 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             pass
         
     dev_id = cow.device_id if cow else str(cow_id)
+
+    # Also check cache by resolved dev_id
+    cached_7day = _DB_COW_7DAY_CACHE.get(str(dev_id))
+    if cached_7day and cached_7day["expires_at"] > now_ts:
+        return cached_7day["data"]
 
     # Calculate last 7 dates
     today = datetime.now(timezone.utc).date()
@@ -655,7 +699,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         "DRN": 0.0
     }
 
-    return {
+    res_7day = {
         "cowId": str(dev_id),
         "device_id": str(dev_id),
         "source": "gatewayless",
@@ -671,3 +715,12 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         "estrusAlerts": [],
         "weeklyAverageHours": weekly_avg
     }
+    _DB_COW_7DAY_CACHE[str(dev_id)] = {
+        "expires_at": time.time() + 600.0,
+        "data": res_7day
+    }
+    _DB_COW_7DAY_CACHE[str(cow_id)] = {
+        "expires_at": time.time() + 600.0,
+        "data": res_7day
+    }
+    return res_7day
