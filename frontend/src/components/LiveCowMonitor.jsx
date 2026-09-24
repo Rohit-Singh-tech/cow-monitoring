@@ -51,24 +51,31 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
   
   const riskClass = String(healthDecision || 'no-data').toLowerCase().replace('_', '-');
 
+  const isStale = Boolean(currentData.isStale || (typeof health.monitoredHoursToday === 'number' && health.monitoredHoursToday === 0));
+
   // Detect current activity key
-  let currentActKey = 'RUS';
-  if (actData.code) {
-    currentActKey = actData.code;
-  } else if (ml.activity?.code) {
-    currentActKey = ml.activity.code;
-  } else if (ml.activity?.primary_activity) {
-    currentActKey = ml.activity.primary_activity;
-  } else if (typeof currentData.currentActivity === 'string') {
-    currentActKey = currentData.currentActivity;
+  let currentActKey = null;
+  if (!isStale) {
+    if (actData.code) {
+      currentActKey = actData.code;
+    } else if (ml.activity?.code) {
+      currentActKey = ml.activity.code;
+    } else if (ml.activity?.primary_activity) {
+      currentActKey = ml.activity.primary_activity;
+    } else if (typeof currentData.currentActivity === 'string') {
+      currentActKey = currentData.currentActivity;
+    }
   }
 
-  const act = activities[currentActKey] || actData || activities['RUS'] || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' };
+  const act = isStale
+    ? { code: '--', name: 'No Recent Data', color: '#94A3B8', icon: 'fa-pause' }
+    : (currentActKey ? (activities[currentActKey] || actData || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' }) : { code: '--', name: 'No Recent Data', color: '#94A3B8', icon: 'fa-pause' });
 
-  const isHighRisk = healthDecision === 'HIGH_RISK' || 
+  const isHighRisk = !isStale && (
+                     healthDecision === 'HIGH_RISK' || 
                      healthDecision === 'ESTRUS_ALERT' || 
                      Boolean(health.isHeatDetected) ||
-                     (typeof health.estrusProbabilityPercent === 'number' && health.estrusProbabilityPercent > 70);
+                     (typeof health.estrusProbabilityPercent === 'number' && health.estrusProbabilityPercent > 70));
 
   const gridLineColor = theme === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.06)';
   const chartTickColor = theme === 'light' ? '#475569' : '#94A3B8';
@@ -239,8 +246,8 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
               {currentData.breed && currentData.breed !== 'CowNeck Collar Cow' && (
                 <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>
               )}
-              <span className={`health-badge ${healthDecision}`}>
-                {currentData.isStale ? 'NO DATA' : String(healthDecision).replace('_', ' ')}
+              <span className={`health-badge ${isStale ? 'NO_DATA' : healthDecision}`}>
+                {isStale ? 'NO DATA' : String(healthDecision).replace('_', ' ')}
               </span>
             </div>
           </div>
@@ -248,11 +255,11 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         <div className="current-activity-box">
           <div className="activity-label-sm">CURRENT BEHAVIOUR STATE</div>
           <div className="activity-badge-hero">
-            <i className={`fa-solid ${act.icon || 'fa-question'}`} style={{ color: act.color }}></i> {currentData.isStale ? 'No Recent Data' : (act.name || 'Unknown')}
+            <i className={`fa-solid ${act.icon || 'fa-question'}`} style={{ color: act.color }}></i> {act.name || (isStale ? 'No Recent Data' : 'Unknown')}
           </div>
           <div className="activity-duration-tag">
             <i className="fa-solid fa-brain" style={{ color: 'var(--accent-emerald)', marginRight: '0.25rem' }}></i>
-            CONFIDENCE: <strong style={{ color: 'var(--text-primary)' }}>{currentData.isStale ? '0' : Number(confidence).toFixed(1)}%</strong>
+            CONFIDENCE: <strong style={{ color: 'var(--text-primary)' }}>{isStale ? '0.0' : Number(confidence).toFixed(1)}%</strong>
           </div>
         </div>
       </div>
@@ -270,7 +277,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         </div>
       )}
 
-      {!isHighRisk && healthDecision === 'MONITOR' && (
+      {!isHighRisk && !isStale && healthDecision === 'MONITOR' && (
         <div className="alert-banner warning">
           <div className="alert-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
           <div className="alert-content">
@@ -280,12 +287,12 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         </div>
       )}
       
-      {currentData.isStale && (
+      {isStale && (
         <div className="alert-banner" style={{ background: 'rgba(100, 116, 139, 0.15)', border: '1px solid rgba(100, 116, 139, 0.3)', color: 'var(--text-primary)' }}>
           <div className="alert-icon" style={{ color: '#64748b' }}><i className="fa-solid fa-clock"></i></div>
           <div className="alert-content">
-            <h4>NODE OFFLINE / NO RECENT DATA</h4>
-            <p>{health.healthRecommendation || 'No sensor data received in the last 24 hours. Check collar node battery and BLE connectivity.'}</p>
+            <h4>NO TELEMETRY RECORDED TODAY</h4>
+            <p>{health.healthRecommendation || 'No sensor telemetry received today for this collar node. Metrics and diagnostics will activate when fresh data arrives.'}</p>
           </div>
         </div>
       )}
@@ -304,9 +311,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             </span>
           </div>
           <div>
-            <div className="metric-value">{act.code || 'RUS'}</div>
+            <div className="metric-value">{isStale ? '--' : (act.code || '--')}</div>
             <div className="metric-title">CURRENT ACTIVITY</div>
-            <div className="metric-footer">ML Engine ACTIVE</div>
+            <div className="metric-footer">{isStale ? 'ML Engine OFFLINE' : 'ML Engine ACTIVE'}</div>
           </div>
         </div>
 
@@ -360,10 +367,10 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
           </div>
           <div>
             <div className="metric-value" style={{ color: isHighRisk ? 'var(--accent-rose)' : 'var(--text-primary)' }}>
-              {health.estrusProbabilityPercent || 0}%
+              {isStale ? 0 : (health.estrusProbabilityPercent || 0)}%
             </div>
             <div className="metric-title">ESTRUS PROBABILITY</div>
-            <div className="metric-footer">{isHighRisk ? '🚨 Estrus Flagged (In Heat)' : 'Environmental & Cycle'}</div>
+            <div className="metric-footer">{isStale ? 'No Telemetry Today' : (isHighRisk ? '🚨 Estrus Flagged (In Heat)' : 'Environmental & Cycle')}</div>
           </div>
         </div>
 
@@ -378,7 +385,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             </span>
           </div>
           <div>
-            <div className="metric-value">{accelDataObj.labels?.length || 80}</div>
+            <div className="metric-value">{isStale ? 0 : (accelDataObj.labels?.length || 0)}</div>
             <div className="metric-title">PACKETS BUFFERED</div>
             <div className="metric-footer">Rolling Window Size</div>
           </div>
@@ -395,11 +402,11 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             </span>
           </div>
           <div>
-            <div className="metric-value" style={{ color: anomalyScore > 0.5 ? 'var(--accent-rose)' : 'var(--text-primary)' }}>
-              {typeof anomalyScore === 'number' ? anomalyScore.toFixed(3) : anomalyScore}
+            <div className="metric-value" style={{ color: !isStale && anomalyScore > 0.5 ? 'var(--accent-rose)' : 'var(--text-primary)' }}>
+              {isStale ? '--' : (typeof anomalyScore === 'number' ? anomalyScore.toFixed(3) : anomalyScore)}
             </div>
             <div className="metric-title">ISOLATION FOREST SCORE</div>
-            <div className="metric-footer">Threshold dependent</div>
+            <div className="metric-footer">{isStale ? 'Engine Idle (Offline)' : 'Threshold dependent'}</div>
           </div>
         </div>
 
@@ -415,9 +422,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
               <i className="fa-solid fa-wave-square" style={{ color: 'var(--accent-cyan)' }}></i>
               RAW XYZ MOTION TELEMETRY (10 HZ LIVE STREAM)
             </div>
-            <div className="status-pill streaming">
-              <span className="pulse-dot"></span>
-              STREAMING
+            <div className={`status-pill ${isStale ? 'offline' : 'streaming'}`} style={isStale ? { background: 'rgba(100, 116, 139, 0.15)', borderColor: 'rgba(100, 116, 139, 0.3)', color: 'var(--text-muted)' } : {}}>
+              <span className={isStale ? '' : 'pulse-dot'} style={isStale ? { width: '8px', height: '8px', borderRadius: '50%', background: '#64748b', display: 'inline-block', marginRight: '0.4rem' } : {}}></span>
+              {isStale ? 'OFFLINE' : 'STREAMING'}
             </div>
           </div>
           <div className="card-body">
@@ -448,12 +455,20 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             </div>
           </div>
           <div className="card-body" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '210px' }}>
-            <Doughnut data={pieData} options={pieOptions} />
+            {monitoredHours === 0 ? (
+              <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)' }}>
+                <i className="fa-solid fa-chart-pie" style={{ fontSize: '2.5rem', opacity: 0.35, marginBottom: '0.75rem', display: 'block' }}></i>
+                <div style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>No Activity Recorded Today</div>
+                <div style={{ fontSize: '0.75rem', marginTop: '0.25rem', maxWidth: '220px' }}>Collar node has not transmitted telemetry packets for today yet.</div>
+              </div>
+            ) : (
+              <Doughnut data={pieData} options={pieOptions} />
+            )}
           </div>
           <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)', textAlign: 'center', borderRadius: '0 0 var(--radius-md) var(--radius-md)' }}>
-            <span style={{ color: 'var(--accent-emerald)', fontWeight: 800, fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-              <i className="fa-solid fa-circle-check" style={{ marginRight: '0.35rem' }}></i>
-              CONTINUOUS DIAGNOSTICS ACTIVE
+            <span style={{ color: monitoredHours === 0 ? 'var(--text-muted)' : 'var(--accent-emerald)', fontWeight: 800, fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
+              <i className={`fa-solid ${monitoredHours === 0 ? 'fa-pause' : 'fa-circle-check'}`} style={{ marginRight: '0.35rem' }}></i>
+              {monitoredHours === 0 ? 'NO TELEMETRY RECORDED TODAY' : 'CONTINUOUS DIAGNOSTICS ACTIVE'}
             </span>
           </div>
         </div>

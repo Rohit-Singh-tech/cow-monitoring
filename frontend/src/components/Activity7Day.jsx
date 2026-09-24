@@ -288,15 +288,17 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
   // Filter Logs (now pre-grouped by backend)
   const activeLogs = logs || [];
 
-  // Determine latest date in the log set to scope to Today (24 Hours)
-  const latestDateStr = activeLogs.length > 0
-    ? new Date(activeLogs[0].startTime).toISOString().slice(0, 10)
-    : null;
-
   const scopeFilteredLogs = activeLogs.filter(log => {
-    if (dateScope === '24H' && latestDateStr) {
-      const logDate = new Date(log.startTime).toISOString().slice(0, 10);
-      return logDate === latestDateStr;
+    if (dateScope === '24H') {
+      if (!log.startTime) return false;
+      const logDate = new Date(log.startTime);
+      const today = new Date();
+      // Strictly match today's calendar date (local day)
+      return (
+        logDate.getFullYear() === today.getFullYear() &&
+        logDate.getMonth() === today.getMonth() &&
+        logDate.getDate() === today.getDate()
+      );
     }
     return true;
   });
@@ -512,7 +514,9 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
                 ) : (
                   <tr>
                     <td colSpan="9" style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                      No activity logs match your search or filter.
+                      {dateScope === '24H'
+                        ? "No activity logs recorded for today. Switch to 'All 7 Days' above to view historical logs."
+                        : "No activity logs match your search or filter."}
                     </td>
                   </tr>
                 )}
@@ -570,7 +574,9 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
               ))
             ) : (
               <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)' }}>
-                No activity logs match your search or filter.
+                {dateScope === '24H'
+                  ? "No activity logs recorded for today. Switch to 'All 7 Days' above to view historical logs."
+                  : "No activity logs match your search or filter."}
               </div>
             )}
           </div>

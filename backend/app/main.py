@@ -238,11 +238,10 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     from app.models.datalogger import DataloggerHeader, MLInference
     from app.api.endpoints.config import DEFAULT_ACTIVITIES_MAP
     
-    # Get paginated headers with their pre-computed ML inferences in ONE query
+    # Query headers for the last 7 days so users can view today's logs or full 7-day history
     from datetime import datetime, timedelta, timezone
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     
-    # Get ALL headers for the last 24 hours, ordered ASCENDING to group them correctly
     headers = db.query(DataloggerHeader).filter(
         DataloggerHeader.device_id == str(dev_id),
         DataloggerHeader.timestamp >= cutoff
@@ -250,7 +249,7 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     
     if not headers:
         empty_res = {"success": True, "logs": [], "page": page, "limit": limit}
-        _DB_ACT_LOGS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": empty_res}
+        _DB_ACT_LOGS_CACHE[cache_key] = {"expires_at": time.time() + 30.0, "data": empty_res}
         return empty_res
     
     # Batch fetch ML inferences for all headers
@@ -260,19 +259,24 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     ).all()
     inf_by_header = {inf.header_id: inf for inf in inferences}
     
-    # Use cached activity map (avoids extra DB query)
     ACTIVITY_CFG = DEFAULT_ACTIVITIES_MAP
     
     grouped_logs = []
     current_group = None
+    last_ts = None
 
     for h in headers:
         inf = inf_by_header.get(h.id)
         act_code = inf.activity_code if inf else "RES"
         conf = inf.confidence if (inf and inf.confidence) else 85
+        ts = h.timestamp
         
-        if current_group and current_group["activityCode"] == act_code:
-            current_group["endTime"] = h.timestamp.isoformat() if h.timestamp else current_group["endTime"]
+        # Break session if there is a gap > 120s or if date crosses calendar boundary
+        is_gap = last_ts and (ts - last_ts).total_seconds() > 120
+        is_day_change = last_ts and (ts.date() != last_ts.date())
+        
+        if current_group and current_group["activityCode"] == act_code and not is_gap and not is_day_change:
+            current_group["endTime"] = ts.isoformat() if ts else current_group["endTime"]
             current_group["packetCount"] += 1
             current_group["endPacketId"] = f"P-{h.packet_id_num}"
             current_group["confidenceSum"] += conf
@@ -283,8 +287,8 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
             act_info = ACTIVITY_CFG.get(act_code, {"name": act_code, "color": "#94a3b8", "category": "Unknown"})
             current_group = {
                 "logId": h.id,
-                "startTime": h.timestamp.isoformat() if h.timestamp else "",
-                "endTime": h.timestamp.isoformat() if h.timestamp else "",
+                "startTime": ts.isoformat() if ts else "",
+                "endTime": ts.isoformat() if ts else "",
                 "packetCount": 1,
                 "activityCode": act_code,
                 "activityName": act_info["name"],
@@ -294,38 +298,29 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
                 "startPacketId": f"P-{h.packet_id_num}",
                 "endPacketId": f"P-{h.packet_id_num}"
             }
+        last_ts = ts
             
     if current_group:
         grouped_logs.append(current_group)
         
-    # Calculate durations and reconstruct timeline backward to prevent gaps/overlaps
-    current_end_time = None
-    
-    for g in reversed(grouped_logs):
-        duration_secs = g["packetCount"] * 8
+    for g in grouped_logs:
+        pkt_count = g.get("packetCount", 1)
+        duration_secs = pkt_count * 8
         if duration_secs < 60:
             g["durationDisplay"] = f"{duration_secs} secs"
+        elif duration_secs < 3600:
+            mins = duration_secs // 60
+            g["durationDisplay"] = f"{mins} mins" if mins > 1 else "1 min"
         else:
-            g["durationDisplay"] = f"{round(duration_secs / 60)} mins"
+            hrs = duration_secs // 3600
+            mins = round((duration_secs % 3600) / 60)
+            if mins == 60:
+                hrs += 1
+                mins = 0
+            g["durationDisplay"] = f"{hrs}h {mins}m" if mins > 0 else f"{hrs}h"
         
-        # We need to keep a numerical value for time calculations below
-        duration_mins = max(1, round(duration_secs / 60))
-        g["durationMinutes"] = duration_mins
-        
-        if current_end_time is None:
-            if g["endTime"]:
-                current_end_time = datetime.fromisoformat(g["endTime"])
-            else:
-                current_end_time = datetime.now(timezone.utc)
-                
-        g["endTime"] = current_end_time.isoformat()
-        
-        start_time = current_end_time - timedelta(minutes=duration_mins)
-        g["startTime"] = start_time.isoformat()
-        
-        current_end_time = start_time
-        
-        g["confidencePercent"] = round(g["confidenceSum"] / g["packetCount"])
+        g["durationMinutes"] = max(1, round(duration_secs / 60))
+        g["confidencePercent"] = round(g["confidenceSum"] / pkt_count)
         del g["packetCount"]
         del g["confidenceSum"]
         
@@ -340,14 +335,15 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
         "logs": paged_logs,
         "page": page,
         "limit": limit,
+        "totalLogs": len(grouped_logs),
         "source": "render_db"
     }
     _DB_ACT_LOGS_CACHE[cache_key] = {
-        "expires_at": time.time() + 180.0,
+        "expires_at": time.time() + 30.0,
         "data": logs_payload
     }
     _DB_ACT_LOGS_CACHE[dev_cache_key] = {
-        "expires_at": time.time() + 180.0,
+        "expires_at": time.time() + 30.0,
         "data": logs_payload
     }
     return logs_payload
