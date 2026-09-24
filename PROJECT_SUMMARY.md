@@ -1,98 +1,168 @@
-# Cow Health Monitoring System - Detailed Project Summary
+# Cow Health Monitoring System - Technical Project Summary & Latest Specifications
 
-This document serves as a comprehensive technical summary of the entire Cow Health Monitoring system. It outlines the application architecture, all API endpoints, frontend screens, displayed parameters, and the machine learning models utilized to generate insights from raw telemetry data.
+This document provides a comprehensive, production-aligned technical summary of the entire **Cow Health Monitoring System**. It reflects all latest architectural enhancements, dual-source telemetry integrations, dynamic data-driven algorithms, machine learning pipelines, and hardware specifications.
 
 ---
 
 ## 1. Machine Learning Engine (Backend)
 
-The backend utilizes pre-trained machine learning models to decode raw 10Hz XYZ accelerometer and magnetometer data into behavioral and physiological insights. The `MLModelManager` orchestrates these models as a singleton process.
+The backend utilizes pre-trained machine learning models to decode raw 10 Hz $X, Y, Z$ accelerometer data into behavioral and physiological insights. The `MLModelManager` orchestrates these models as a RAM singleton process.
 
 ### Models & Extractors
-*   **Feature Extractor (`extract_67_features`)**: 
-    *   Takes raw XYZ arrays and computes 67 distinct statistical and frequency-domain features (mean, variance, skewness, kurtosis, FFT peaks, spectral entropy, correlations across axes, etc.).
-*   **Activity Classification Model (`activity_model.pkl`)**: 
-    *   **Architecture**: LightGBM Multi-class Classifier.
-    *   **Purpose**: Classifies a given 8-second window of features into 17 distinct behavioral classes (e.g., `RUS` - Ruminating, `REL` - Lying Rest, `MOV` - Walking, `FEP` - Feeding).
+*   **67-Dimensional Feature Extractor (`extract_67_features`)**:
+    *   Takes raw $X, Y, Z$ arrays (80 samples @ 10 Hz = 8.0-second observation window) and computes 67 distinct statistical and frequency-domain features:
+        *   **Axis-Specific (48 features)**: Mean, Std Dev, Variance, Min, Max, Range, Median, $Q_{25}$, $Q_{75}$, Absolute Mean, Energy ($\sum s_i^2$), Skewness, Kurtosis, Differential Mean ($\overline{\Delta s}$), Differential Std Dev, Differential Max.
+        *   **Vector Magnitude ($\mathbf{Mag} = \sqrt{X^2 + Y^2 + Z^2}$) (10 features)**: Mean, Std, Var, Min, Max, Range, Median, $Q_{25}$, $Q_{75}$, Energy.
+        *   **Dynamic Movement Jerk ($|\Delta \mathbf{Mag}|$) (4 features)**: Mean, Std, Max, Energy.
+        *   **Global & Cross-Axial (5 features)**: Signal Magnitude Area (SMA), Cross-Axis Pearson Correlations ($r_{xy}, r_{xz}, r_{yz}$), and Histogram Shannon Entropy.
+*   **Activity Classification Model (`activity_model.pkl`)**:
+    *   **Architecture**: LightGBM Multi-Class Classifier trained on 889,376 rows (8,871 labeled windows).
+    *   **Behavioral Classes (17 total)**: `RUS` (Ruminating), `REL` (Lying Rest), `RES` (Standing Rest), `MOV` (Walking/Active), `FEP` / `FED` / `FES` / `GRZ` (Feeding & Grazing), `DRN` (Drinking), `LCK` (Licking/Grooming), `URI` (Urinating), `DEF` (Defecating), `ATT` (Aggressive Head-Butting), `BMN` (Bellowing/Moaning), `SLT` (Salt Lick), `ETC` / `NAN` / `OTHER_ACTIVITY` (Unclassified Active).
 *   **Estrus/Heat Detection Model (`heat_model.pkl`)**:
-    *   **Architecture**: LightGBM Binary Classifier.
-    *   **Purpose**: specifically trained on highly restless activity signatures and mounting behaviors to flag periods of high Estrus probability (in-heat).
+    *   **Architecture**: LightGBM Binary Classifier trained on 1,048,571 rows (10,484 labeled windows).
+    *   **Alert Escalation**: Outputs continuous probability ($0.0 - 1.0$). Evaluated as **Normal** ($\le 0.40$), **Moderate** ($0.40 - 0.70$), or **High Heat Alert** ($> 0.70$).
 *   **Anomaly Detection Model (`anomaly_model.pkl`)**:
-    *   **Architecture**: Isolation Forest (Unsupervised).
-    *   **Purpose**: Detects unusual physical movements (e.g., limping, falling, thrashing) that fall outside the learned boundaries of normal cow behavior, outputting an Anomaly Score.
+    *   **Architecture**: Scikit-Learn Isolation Forest (Unsupervised) + Z-score feature deviation using `baseline_mean.pkl` and `baseline_std.pkl`.
+    *   **Function**: Detects physical deviations (limping, trauma, sudden falls, weakness) outside learned healthy movement distributions.
+*   **Health Risk Decision Logic**:
+    *   Combines anomaly scoring, estrus probability, and rumination duration into three states: `HEALTHY`, `MONITOR`, or `HIGH_RISK`.
 
 ---
 
-## 2. API Endpoints
+## 2. Hardware Specifications & Edge Protocol (Collar Node)
 
-The backend is built with FastAPI and organized into several routers based on system functionality.
+Developed in collaboration with **AWaDH Hub (IIT Ropar)**, **GADVASU**, and **NABARD**.
 
-### Ingestion API & Dual-Source Telemetry (Hardware Layer)
-*   **Dual-Source Architecture**:
-    *   **Source 1: Render Database (`render_db`)**: Telemetry headers and points stored in PostgreSQL/SQLite (`datalogger_headers` and `datalogger_points`), queried by node number or hardware tag ID.
-    *   **Source 2: AWS Cloud IoT Gateway API (`aws_api`)**: Live telematics from AWS Lambda (`CowNeck_API_Function?deviceid={id}&startdate={start}&enddate={end}`).
-        *   Telemetry payload: 240 string integers representing 80 sequential readings of $X, Y, Z$ at 10 Hz (8-second window).
-        *   Integrated via `AwsTelemetryService` with gzip decompression and 60-second TTL caching.
-        *   Feeds directly into `MLModelManager` for real-time inference (RUS, REL, MOV, FEP), heat probability, and anomaly scoring.
-*   **`POST /api/ingest/raw`**: Bulk ingestion endpoint for the Dataloggers. Accepts arrays of raw XYZ packets, saves them to SQLite/PostgreSQL, and triggers background ML inference via Celery/BackgroundTasks.
-*   **`POST /api/ingest/packet`**: Ingests a single packet of telemetry data.
-*   **`POST /api/ingest/predict`**: Pure inference endpoint. Takes raw data, extracts features, runs all ML models, and returns classifications without persisting data to the DB.
-
-### Frontend Compatibility API (Web Dashboard)
-*   **`GET /api/cows`**: Returns a list of all monitored cows/nodes along with high-level daily aggregates (used in Herd Overview).
-*   **`GET /api/cow/{cow_id}/current`**: Returns real-time telemetry buffers (Raw X, Y, Z arrays) for live charting, alongside the very latest ML inferences, Health Risk logic, and current active behavior.
-*   **`GET /api/cow/{cow_id}/7day`**: Returns the aggregated historical data over a continuous 7-day window. Missing days are zero-padded. Returns arrays for Rumination Hours, Feeding Hours, Lying Hours, Health Scores, and Estrus Indices.
-*   **`GET /api/cow/{cow_id}/activity-log`**: Returns grouped chronological transition logs for the last 24 hours. The backend fetches raw packet inferences, groups contiguous activities (e.g. 20 packets of `RUS`), calculates precise time durations (8 seconds per packet), and backward-chains start and end times for gapless UI display.
-*   **`POST /api/ble/trigger-dump`**: Triggers a simulated SPI Flash BLE memory dump (e.g., 2,500 packets) for demonstration/hardware testing.
-
-### Admin & Config API
-*   **`POST /api/auth/login`**: Authenticates an administrator and returns a JWT token.
-*   **`GET /api/admin/users`**, **`POST /api/admin/users`**, **`DELETE /api/admin/users/{user_id}`**: CRUD operations for managing admin users.
-*   **`POST /api/admin/tags`**, **`DELETE /api/admin/tags/{tag_id}`**: Maps physical IoT device hardware IDs (e.g. Node-17) to specific Cow IDs (e.g. Tag-17).
-*   **`GET /api/config/activities`**: Returns the global mapping dictionary of Activity Codes (e.g. `RUS`) to human-readable names and UI hex colors.
+*   **Microcontroller / Radio**: Nordic Semiconductor `nRF52832` (32-bit ARM Cortex-M4 @ 64 MHz, BLE 5.0).
+*   **Motion Sensor**: STMicroelectronics `LIS3DH` ultra-low power 3-axis accelerometer operating at 10 Hz (100 ms sampling period).
+*   **Onboard Flash Memory**: 8 MB SPI Flash (Winbond W25Q64FV) configured as a circular overwrite ring buffer.
+    *   **Capacity**: 32,768 telemetry packets (256 bytes per packet).
+    *   **Offline Retention**: **~72.8 Hours (~3.03 Days)** of continuous 10 Hz raw motion logging.
+*   **Battery & Power Equation**:
+    *   Cell: 3.7V, 5400 mAh Li-Ion rechargeable battery.
+    *   Average Current Draw: **98.16 µA (0.09816 mA)** under duty-cycled operation.
+    *   Operational Lifespan: $5400\text{ mAh} / 0.09816\text{ mA} = 55,012\text{ Hours} \approx \mathbf{6.28\text{ Years}}$ (2,292 Days).
+*   **256-Byte Binary Packet Frame Layout**:
+    *   Header: 3 Bytes (Frame synchronization & packet type)
+    *   XYZ Payload: 240 Bytes (80 acceleration samples $\times$ 3 axes @ 10 Hz)
+    *   Original Packet ID: 2 Bytes (Recording sequence counter)
+    *   Current Packet ID: 2 Bytes (Transmission counter)
+    *   Footer: 1 Byte (Frame boundary verification)
+    *   Reserved / Padding: 8 Bytes (Future expansion & word alignment)
+*   **Knock-Knock BLE Security Commands**:
+    *   Data Dump Trigger: `0x59 0x00 0xBB 0xCC`
+    *   Flash Memory Reset Trigger: `0x59 0x00 0xFF 0xFF`
 
 ---
 
-## 3. Frontend Screens & Displayed Parameters
+## 3. Dual-Source Telemetry Architecture & Latest Dynamic Algorithms
 
-The React-based frontend visualizes the ML inferences and database aggregations using a dynamic, real-time UI.
+The platform unifies two independent data streams into a single standardized data contract:
+
+### Telemetry Pipeline 1: Render Cloud Database (`render_db`)
+*   **Flow**: BLE upload $\rightarrow$ Bulk POST $\rightarrow$ PostgreSQL tables (`datalogger_headers`, `datalogger_points`, `ml_inferences`, `daily_cow_summaries`).
+*   **Strict Day-Boundary & Packet Gap Splitting (Latest Enhancement)**:
+    *   In `/api/cow/{id}/activity-log`, packets are strictly partitioned when `ts.date() != last_ts.date()` or when consecutive packet timestamps exhibit a gap $> 120$ seconds.
+    *   Durations and chronological boundaries are calculated from exact header timestamps and packet sequence IDs.
+    *   **Result**: Eliminates historical leakage from previous days. For example, if a node recorded 1h 36m today, only today's sessions are accumulated, preventing yesterday's sessions from inflating today's totals.
+
+### Telemetry Pipeline 2: AWS Cloud IoT Gateway API (`aws_api`)
+*   **Flow**: Cellular/Gateway nodes forward telemetry to AWS Lambda (`CowNeck_API_Function?deviceid={id}&startdate={start}&enddate={end}`).
+*   **Payload**: 240 string integers representing 80 sequential readings of $X, Y, Z$ at 10 Hz.
+*   **Dynamic 7-Day Rolling Window (Latest Enhancement)**:
+    *   Date calculation is 100% dynamic relative to UTC today (`datetime.now(timezone.utc).date()`). No hardcoded dates exist in the codebase.
+    *   Dynamically rolls a continuous 7-day range, zero-padding missing historical days.
+    *   Sub-second response times powered by the pre-computed `_AWS_DAILY_SUMMARIES` cache.
+*   **Zero-Telemetry & Offline Device Handling (Latest Enhancement)**:
+    *   When an AWS device has 0 telemetry for today (or data is stale $> 24$ hours), `monitoredHoursToday` is strictly set to `0.0`, `isStale: True`, and current activity reflects `NO DATA / OFFLINE`.
+    *   The frontend cleanly renders empty states for the 24-hour donut chart and "Today (24 Hours)" log table instead of leaking yesterday's historical activities.
+*   **Extended Timeouts & Snapshot Resilience (Device #8 Fix)**:
+    *   HTTP timeouts increased to `(5, 15)` to handle slow upstream AWS responses without dropping connections.
+    *   Responses are merged with `_LAST_VALID_LOGS` snapshot and prevent empty responses `[]` from poisoning the cache, ensuring all historical records (Sep 22 + Sep 23) remain continuously visible.
+
+### Performance & Caching Layer (Latest Enhancement)
+*   **Startup Pre-Warming (`prewarm_caches`)**:
+    *   FastAPI `lifespan` automatically runs an asynchronous pre-warming routine at server startup.
+    *   Pre-loads DB herd overview, default cow (17), and all enabled AWS devices (`AWS_ENABLED_DEVICE_IDS = ["8", "7", "9", "1", "3", "4", "5", "6"]`).
+    *   Delivers instantaneous sub-15ms response times for all initial dashboard requests.
+*   **Cache Management**:
+    *   Dedicated endpoint `POST /api/aws/clear-cache` clears all in-memory caches and snapshots on demand.
+
+---
+
+## 4. API Endpoints
+
+The backend is built with FastAPI and organized into modular routers:
+
+### Ingestion & Machine Learning
+*   `POST /api/v1/ingest/raw`: Bulk ingestion for datalogger BLE dumps. Persists headers and points; triggers background ML inference.
+*   `POST /api/v1/ingest/packet`: Ingests a single 256-byte telemetry frame.
+*   `POST /api/v1/ingest/predict`: Pure stateless ML inference endpoint. Accepts $X, Y, Z$ arrays, extracts 67 features, and returns classifications without DB write.
+
+### Frontend Compatibility / Web Dashboard
+*   `GET /api/cows`: Returns herd overview with daily rumination hours, current behavior, estrus alert badges, and source badges (`🗄️ RENDER DB` vs `☁️ AWS COLLAR`).
+*   `GET /api/cow/{cow_id}/current`: Returns real-time telemetry buffer ($X, Y, Z$ waveforms at 10 Hz), current ML activity, confidence, anomaly score, and health risk.
+*   `GET /api/cow/{cow_id}/7day`: Returns dynamic 7-day rolling window analytics: daily hours for Rumination, Feeding, Lying Rest, Moving, plus Health and Estrus indices.
+*   `GET /api/cow/{cow_id}/activity-log`: Returns gapless 24-hour chronological activity transition table with accurate start/end timestamps, duration, confidence, and packet IDs.
+
+### Hardware Control & Diagnostics
+*   `POST /api/ble/trigger-dump`: Sends the BLE Knock-Knock data retrieval trigger (`0x5900BBCC`).
+*   `POST /api/ble/trigger-reset`: Sends the BLE memory reset trigger (`0x5900FFFF`).
+*   `POST /api/aws/clear-cache`: Clears all AWS telemetry caches and snapshots.
+
+### Admin & Configuration
+*   `POST /api/auth/login`: Authenticates administrator and returns a JWT token.
+*   `GET` / `POST` / `DELETE /api/admin/users`: CRUD for admin users.
+*   `POST` / `DELETE /api/admin/tags`: Maps physical IoT device hardware IDs (e.g. Node-17) to Cow IDs (e.g. Tag-17).
+*   `GET /api/config/activities`: Returns global mapping of Activity Codes to human-readable names and UI hex colors.
+*   `GET /health`: Health-check endpoint verifying DB connectivity and ML model loading in RAM.
+
+---
+
+## 5. Frontend Screens & Displayed Parameters
+
+Built with **React 19**, **Vite 8**, **Chart.js**, and **TailwindCSS v4**:
 
 ### Global Elements
-*   **Sidebar Navigation**: Links to Sys Diagnostics, 7-Day Logs, Node Directory, Hardware Specs, and Archives.
-*   **Navbar**: Global target node selector dropdown, global connection status indicator, theme toggler (Dark/Light), and alert notification bell.
+*   **Sidebar Navigation**: Sys Diagnostics, 7-Day Logs, Herd Overview, Hardware Specs, Node Directory, and Project Docs.
+*   **Navbar**: Global target cow dropdown with source prefixes (`[☁️ AWS]` vs `[🗄️ DB]`), connection heartbeat badge, and theme toggler.
 
 ### Screen 1: System Diagnostics (`LiveCowMonitor.jsx`)
-This is the primary real-time dashboard for a selected device.
-*   **Header Card**: Displays current node/tag ID, Health Risk Badge (e.g. HIGH RISK, HEALTHY), current Activity state (e.g. "Ruminating"), and the ML Confidence percentage for that state.
-*   **Critical Alert Banner**: Only displays if a critical risk (like Estrus or Illness) is detected.
+*   **Header Card**: Target node/tag ID, Health Risk Badge (`HEALTHY`, `MONITOR`, `HIGH_RISK`), current Activity state (e.g., `RUS - Ruminating`), and ML Confidence percentage.
+*   **Critical Alert Banner**: High-priority alert triggered on estrus detection or acute kinematic anomaly.
 *   **Telemetry KPI Tiles**:
-    *   **Current Activity**: (e.g., RUS, MOV, REL).
-    *   **Rumination Total**: Sum of rumination for the current day (target 8-10 hours).
-    *   **Lying Rest Hours**: Total rest duration for the day.
-    *   **Estrus Probability**: The real-time ML probability that the cow is in heat.
-    *   **Packets Buffered**: Number of raw data packets ingested in the current polling window.
-    *   **Isolation Forest Score**: The numerical anomaly score representing physical deviation.
-*   **Live Charts**:
-    *   **Raw XYZ Motion Telemetry**: A high-frequency (10 Hz) live streaming line chart plotting X, Y, and Z accelerometer values in real-time.
-    *   **Actual Behavior Matrix (Today)**: A colored matrix/heatmap representing the frequency of different activities throughout the day.
+    *   **Current Activity**: Real-time behavioral classification.
+    *   **Rumination Total**: Sum of rumination for the current day (target 8–10 hours).
+    *   **Lying Rest Hours**: Total rest duration for the current day.
+    *   **Estrus Probability**: Real-time percentage indicator with color grading.
+    *   **Packets Buffered**: Number of raw telemetry packets ingested in the current polling window.
+    *   **Isolation Forest Score**: Numerical anomaly score representing kinematic deviation.
+*   **Live Visualizations**:
+    *   **Raw XYZ Motion Telemetry**: High-frequency (10 Hz) live streaming line chart plotting $X, Y, Z$ accelerometer values in real-time.
+    *   **Behavior Distribution Donut**: 24-hour proportional time breakdown across activity classes with clean empty state for zero-telemetry days.
 
-### Screen 2: 7-Day Logs (`Activity7Day.jsx`)
-Visualizes historical trends and transition timelines.
-*   **Line/Bar Charts**:
-    *   **7-Day Activity Time Allocation**: A stacked/grouped chart showing daily hours dedicated to Rumination, Lying, Feeding, and Movement over the continuous past 7 days.
-    *   **Health Score & Estrus Index Trends**: A line chart tracking the overall 0-100 Health Score and 0-100 Estrus Index across the week.
-*   **7-Day Average Distribution**: A summarized list calculating the exact average daily hours per activity class (REL, RUS, FEP, MOV) over the week.
-*   **Recorded Activity Transition Logs**: A paginated table showing the exact gapless chronological transitions for the last 24 hours.
-    *   **Parameters**: Log ID, Target Node, True Start Time, True End Time, Accurate Duration (in mins/hours), Activity Class (e.g. `RUS - Ruminating`), Category, Average Confidence (%), and SPI Packet ID boundaries.
+### Screen 2: 7-Day Activity Trends & Transition Logs (`Activity7Day.jsx`)
+*   **7-Day Activity Time Allocation**: Stacked bar chart showing daily hours dedicated to Rumination, Lying, Feeding, and Movement over the dynamic past 7 days.
+*   **Health Score & Estrus Index Trends**: Multi-axis line chart tracking composite Health Score (0–100) and Estrus Index (0–100) across the week.
+*   **7-Day Average Distribution**: Summarized daily average hours per activity class (REL, RUS, FEP, MOV) over the week.
+*   **Recorded Activity Transition Logs**:
+    *   Chronological, gapless table for the current day.
+    *   **Columns**: Log ID, Target Node, Start Time, End Time, Accurate Duration (in mins/hours), Activity Class, Category, Average Confidence (%), and SPI Packet ID boundaries.
 
 ### Screen 3: Herd Overview (`HerdOverview.jsx`)
-A macro-level view of the entire farm.
 *   **Source Filter**: Filter by `All Sources`, `🗄️ Render Database`, or `☁️ AWS Cloud Collars`.
-*   **KPI Banners**: Total Monitored Cows, High Risk Nodes, Heat Alerts Active, and Herd Average Rumination.
-*   **Herd Roster Table & Cards**: 
-    *   **Parameters**: Node/Tag ID, Source Badge (`🗄️ RENDER DB` / `☁️ AWS COLLAR`), Live Status (Active/Inactive), Heartbeat timestamp, Current ML Inference, Health Status (Healthy, Warning, High Risk), and Battery Voltage.
-*   **Global Navbar**: Includes source prefixes (`[☁️ AWS]` vs `[🗄️ DB]`) in the target cow dropdown selector.
+*   **KPI Banners**: Total Monitored Cows, High-Risk Nodes, Heat Alerts Active, and Herd Average Rumination.
+*   **Herd Roster Cards**: Node/Tag ID, Source Badge (`🗄️ RENDER DB` / `☁️ AWS COLLAR`), Live Status, Heartbeat timestamp, Current ML Inference, Health Status, and Battery Voltage.
 
-### Screen 4: Hardware Specs & Admin
-*   **`HardwareSpecs.jsx`**: Displays technical architecture diagrams, PCB board layouts, and hardware engineering specifications of the physical dataloggers.
-*   **`AdminPanel.jsx` / `NodeDirectory.jsx`**: Administrative tables for registering new users, removing users, pairing hardware devices to cows, and clearing out dead/unassigned nodes.
+### Screen 4: Hardware Specs & Diagnostics (`HardwareSpecs.jsx`)
+*   **SPI Flash Ring Buffer Visualizer**: Radial gauge tracking memory utilization (Used vs. Total of 32,768 Packets).
+*   **Battery Lifespan Calculator**: Interactive calculation based on 5400 mAh capacity and 98.16 µA draw (~6.28 Years).
+*   **UART / BLE Terminal**: Live interactive terminal demonstrating data dump (`0x5900BBCC`) and flash reset (`0x5900FFFF`) protocol execution.
+
+### Screen 5: Node Directory & Admin (`AdminPanel.jsx`)
+*   **Tag Registry Management**: Pair physical collar hardware MAC addresses with farm livestock IDs.
+*   **User Management**: Add and manage dashboard operator accounts.
+*   **Activity Palette**: Inspect and manage activity codes, UI colors, and classification categories.
+
+### Screen 6: Project Documentation (`ProjectDocs.jsx`)
+*   In-app technical viewer detailing project background, 256-byte packet layouts, institutional partnerships, and system specifications.
