@@ -68,20 +68,29 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
 
   // If backend returns parallel arrays instead of a history array, construct the history array
   if (!history && data7Day.days) {
-    history = data7Day.days.map((day, idx) => ({
-      day: day,
-      date: data7Day.dates ? data7Day.dates[idx] : `2026-08-0${idx + 1}`,
-      REL: data7Day.lyingRestHours?.[idx] || 0,
-      RUS: data7Day.ruminationHours?.[idx] || 0,
-      FEP: data7Day.feedingHours?.[idx] || 0,
-      MOV: data7Day.activeHours?.[idx] || 0,
-      RES: data7Day.standingRestHours?.[idx] || 0,
-      DRN: data7Day.drinkingHours?.[idx] || 0,
-      LCK: data7Day.lickingHours?.[idx] || 0,
-      OTH: data7Day.otherHours?.[idx] || 0,
-      healthScore: data7Day.healthScores?.[idx] || 0,
-      estrusIndex: data7Day.estrusIndices?.[idx] || 0
-    }));
+    const totalDays = data7Day.days.length;
+    history = data7Day.days.map((day, idx) => {
+      let dateVal = data7Day.dates?.[idx];
+      if (!dateVal) {
+        const d = new Date();
+        d.setDate(d.getDate() - (totalDays - 1 - idx));
+        dateVal = d.toISOString().slice(0, 10);
+      }
+      return {
+        day: day,
+        date: dateVal,
+        REL: data7Day.lyingRestHours?.[idx] || 0,
+        RUS: data7Day.ruminationHours?.[idx] || 0,
+        FEP: data7Day.feedingHours?.[idx] || 0,
+        MOV: data7Day.activeHours?.[idx] || 0,
+        RES: data7Day.standingRestHours?.[idx] || 0,
+        DRN: data7Day.drinkingHours?.[idx] || 0,
+        LCK: data7Day.lickingHours?.[idx] || 0,
+        OTH: data7Day.otherHours?.[idx] || 0,
+        healthScore: data7Day.healthScores?.[idx] || 0,
+        estrusIndex: data7Day.estrusIndices?.[idx] || 0
+      };
+    });
   }
 
   if (!history || history.length === 0) {
