@@ -165,13 +165,19 @@ def _load_snapshot():
                             "health_risk_decision": "NO_DATA"
                         })
 
-            # Pre-warm fast in-memory activity logs cache from snapshot
+            # Pre-warm fast in-memory activity logs cache from snapshot within active 7-day window
+            cutoff_7d = (datetime.now(timezone.utc).date() - timedelta(days=6)).strftime("%Y-%m-%d")
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            for dev_id, saved_logs_data in _LAST_VALID_LOGS.items():
+            for dev_id, saved_logs_data in list(_LAST_VALID_LOGS.items()):
                 l_list = saved_logs_data.get("logs", []) if isinstance(saved_logs_data, dict) else saved_logs_data
                 if l_list:
-                    act_cache_key = f"actlogs_{dev_id}_{today_str}"
-                    _AWS_CACHE[act_cache_key] = {"expires_at": time.time() + 86400.0, "data": l_list}
+                    filtered_7d = [l for l in l_list if l.get("startTime", "")[:10] >= cutoff_7d]
+                    _LAST_VALID_LOGS[dev_id] = filtered_7d
+                    if filtered_7d:
+                        act_cache_key = f"actlogs_{dev_id}_{today_str}"
+                        _AWS_CACHE[act_cache_key] = {"expires_at": time.time() + 30.0, "data": filtered_7d}
+                else:
+                    _LAST_VALID_LOGS[dev_id] = []
 
         logger.info(f"Loaded persistent AWS telemetry snapshot with {len(_AWS_DAILY_SUMMARIES)} daily summary devices.")
     except Exception as e:
@@ -923,7 +929,18 @@ class AwsTelemetryService:
         l_hrs = round((c_rel * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
         f_hrs = round((c_fep * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
         m_hrs = round((c_mov * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
-        h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
+        # Realistic health score computation:
+        # If full day (mon_hrs >= 4), compare r_hrs against 8.0 standard.
+        # If partial day / today (mon_hrs < 4), normalize rumination proportion to daily standard.
+        if mon_hrs >= 4.0:
+            h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
+        elif mon_hrs > 0:
+            rum_ratio = r_hrs / mon_hrs
+            # Normal healthy cow ruminates 30-40% of the time (7-9 hours in 24h)
+            h_score = min(100, max(25, int((rum_ratio / 0.35) * 80))) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 20)
+        else:
+            h_score = 0
+
         e_idx = int((c_heat / tot) * 100) if tot > 0 else 0
 
         _AWS_DAILY_SUMMARIES[dev_key][d_str] = {
@@ -962,18 +979,11 @@ class AwsTelemetryService:
         if cached and cached.get("expires_at", 0) > now_ts:
             return cached["data"]
 
-        # Collect missing days:
-        # Past days (d < today): fetch once and cache in _AWS_DAILY_SUMMARIES
-        # Today (d == today): query AWS if raw cache expired
+        # Collect missing days for past days (d < today): fetch once and cache in _AWS_DAILY_SUMMARIES
         missing_days = []
         for d in date_range:
             d_str = d.strftime("%Y-%m-%d")
-            if d == today:
-                today_cache_key = f"raw_{dev_key}_{today_aws_fmt}_{today_aws_fmt}"
-                c_today = _AWS_CACHE.get(today_cache_key)
-                if not c_today or c_today["expires_at"] <= now_ts:
-                    missing_days.append(d)
-            else:
+            if d < today:
                 if dev_key not in _AWS_DAILY_SUMMARIES or d_str not in _AWS_DAILY_SUMMARIES[dev_key]:
                     missing_days.append(d)
 
@@ -992,6 +1002,10 @@ class AwsTelemetryService:
                         d = future_map[fut]
                         logger.warning(f"Error fetching AWS day {d} for {dev_key}: {e}")
                         cls._update_daily_summary_from_packets(dev_key, d, [])
+
+        # Always fetch/refresh today's data directly so today's telemetry is ALWAYS accurate and live
+        today_pkts = cls.get_processed_packets(dev_key, start_date=today_aws_fmt, end_date=today_aws_fmt)
+        cls._update_daily_summary_from_packets(dev_key, today, today_pkts)
 
         rum_list, lying_list, feed_list, act_list = [], [], [], []
         monitored_list, health_score_list, estrus_index_list = [], [], []
@@ -1068,13 +1082,22 @@ class AwsTelemetryService:
                 "source": "aws_api"
             }
 
-        # Collect packets across the 7 days
+        # Collect packets across the 7 days in parallel
         all_packets = []
-        for d in date_range:
+        def _fetch_day_packets(d: date):
             d_fmt = d.strftime("%d-%m-%Y")
-            pkts = cls.get_processed_packets(dev_key, start_date=d_fmt, end_date=d_fmt)
-            if pkts:
-                all_packets.extend(pkts)
+            return cls.get_processed_packets(dev_key, start_date=d_fmt, end_date=d_fmt)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(date_range))) as executor:
+            future_map = {executor.submit(_fetch_day_packets, d): d for d in date_range}
+            for fut in concurrent.futures.as_completed(future_map):
+                try:
+                    pkts = fut.result()
+                    if pkts:
+                        all_packets.extend(pkts)
+                except Exception as e:
+                    d = future_map[fut]
+                    logger.warning(f"Error fetching packets for activity logs day {d} for {dev_key}: {e}")
 
         all_packets.sort(key=lambda p: p["timestamp"])
 
@@ -1138,7 +1161,8 @@ class AwsTelemetryService:
             del g["packetCount"]
             del g["confidenceSum"]
 
-        # Merge with existing historical logs so temporary AWS timeouts never discard past days
+        # Merge with existing historical logs within the active 7-day window
+        min_date_str = date_range[0].strftime("%Y-%m-%d")
         existing = _LAST_VALID_LOGS.get(dev_key, [])
         if isinstance(existing, dict):
             existing = existing.get("logs", [])
@@ -1146,9 +1170,11 @@ class AwsTelemetryService:
             new_dates = set(l["startTime"][:10] for l in grouped_logs if l.get("startTime"))
             for old_log in existing:
                 old_date = old_log.get("startTime", "")[:10]
-                if old_date and old_date != today.strftime("%Y-%m-%d") and old_date not in new_dates:
+                if old_date and old_date >= min_date_str and old_date not in new_dates:
                     grouped_logs.append(old_log)
 
+        # Enforce that every log is within the active 7-day window
+        grouped_logs = [l for l in grouped_logs if l.get("startTime", "")[:10] >= min_date_str]
         grouped_logs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
         if grouped_logs:
             _LAST_VALID_LOGS[dev_key] = grouped_logs

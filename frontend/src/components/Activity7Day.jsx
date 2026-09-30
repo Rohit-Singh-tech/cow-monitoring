@@ -25,11 +25,11 @@ ChartJS.register(
   Legend
 );
 
-export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }) {
+export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, onRefresh }) {
   const { activities } = useConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
-  const [dateScope, setDateScope] = useState('24H'); // '24H' (Today) or 'ALL'
+  const [dateScope, setDateScope] = useState('ALL'); // Default to 'ALL' (All 7 Days) so all weekly transition logs are shown immediately
 
   // Show loading state when fetching (especially for AWS devices which take longer)
   if (isLoading && !data7Day) {
@@ -104,7 +104,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
 
   const labels = history.map(d => d.date ? `${d.day} (${d.date.slice(5)})` : d.day);
 
-  // Stacked Bar Chart Data
+  // Stacked Bar Chart Data — zero values render flat without fake minimum bars
   const barChartData = {
     labels: labels,
     datasets: [
@@ -132,7 +132,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
       },
       y: {
         stacked: true,
-        max: 24,
+        beginAtZero: true,
+        suggestedMax: 10,
         grid: { color: gridColor },
         ticks: { color: tickColor, font: { family: 'JetBrains Mono', size: 11, weight: '700' } },
         title: { display: true, text: 'Hours in Day', color: tickColor, font: { size: 11, family: 'Inter', weight: '700' } }
@@ -297,17 +298,30 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
   // Filter Logs (now pre-grouped by backend)
   const activeLogs = logs || [];
 
+  const isWithin24HoursOrToday = (isoStr) => {
+    if (!isoStr) return false;
+    try {
+      const logDate = new Date(isoStr);
+      const now = new Date();
+      const diffMs = now.getTime() - logDate.getTime();
+      const within24H = diffMs >= 0 && diffMs <= (24 * 3600 * 1000);
+      const sameDay = (
+        logDate.getFullYear() === now.getFullYear() &&
+        logDate.getMonth() === now.getMonth() &&
+        logDate.getDate() === now.getDate()
+      );
+      return within24H || sameDay;
+    } catch {
+      return false;
+    }
+  };
+
+  const todayLogsCount = activeLogs.filter(log => isWithin24HoursOrToday(log.startTime)).length;
+  const totalLogsCount = activeLogs.length;
+
   const scopeFilteredLogs = activeLogs.filter(log => {
     if (dateScope === '24H') {
-      if (!log.startTime) return false;
-      const logDate = new Date(log.startTime);
-      const today = new Date();
-      // Strictly match today's calendar date (local day)
-      return (
-        logDate.getFullYear() === today.getFullYear() &&
-        logDate.getMonth() === today.getMonth() &&
-        logDate.getDate() === today.getDate()
-      );
+      return isWithin24HoursOrToday(log.startTime);
     }
     return true;
   });
@@ -410,7 +424,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
         <div className="card-header-box" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
           <div className="card-title">
             <i className="fa-solid fa-clock-rotate-left" style={{ color: 'var(--accent-amber)' }}></i>
-            {dateScope === '24H' ? "TODAY'S 24-HOUR ACTIVITY TRANSITION LOGS" : "7-DAY ACTIVITY TRANSITION LOGS"}
+            {dateScope === '24H' ? `TODAY'S 24-HOUR ACTIVITY TRANSITION LOGS (${todayLogsCount})` : `7-DAY ACTIVITY TRANSITION LOGS (${totalLogsCount})`}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
@@ -430,7 +444,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
                 }}
                 onClick={() => setDateScope('24H')}
               >
-                Today (24 Hours)
+                Today ({todayLogsCount})
               </button>
               <button
                 type="button"
@@ -447,7 +461,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
                 }}
                 onClick={() => setDateScope('ALL')}
               >
-                All 7 Days
+                All 7 Days ({totalLogsCount})
               </button>
             </div>
 
@@ -470,6 +484,18 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
               <option value="Nutrition">Nutrition</option>
               <option value="Locomotion">Locomotion</option>
             </select>
+            {onRefresh && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onRefresh}
+                disabled={isLoading}
+                style={{ height: '34px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', cursor: isLoading ? 'not-allowed' : 'pointer' }}
+                title="Refresh 7-day data from backend"
+              >
+                <i className={`fa-solid fa-arrows-rotate ${isLoading ? 'fa-spin' : ''}`}></i> {isLoading ? 'SYNCING...' : 'REFRESH'}
+              </button>
+            )}
             <a href={`/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer" style={{ height: '34px', fontSize: '0.78rem' }}>
               <i className="fa-solid fa-file-arrow-down"></i> EXPORT CSV
             </a>
@@ -524,8 +550,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading }
                   <tr>
                     <td colSpan="9" style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)', fontWeight: 600 }}>
                       {dateScope === '24H'
-                        ? "No activity logs recorded for today. Switch to 'All 7 Days' above to view historical logs."
-                        : "No activity logs match your search or filter."}
+                        ? "No activity logs recorded in the last 24 hours. Switch to 'All 7 Days' above to view weekly logs."
+                        : "No activity logs recorded in the last 7 days for this node."}
                     </td>
                   </tr>
                 )}

@@ -34,6 +34,7 @@ export default function App() {
   const [data7Day, setData7Day] = useState(null);
   const [logs, setLogs] = useState([]);
   const [is7DayLoading, setIs7DayLoading] = useState(false);
+  const [refresh7DayTrigger, setRefresh7DayTrigger] = useState(0);
   const [accelBuffer, setAccelBuffer] = useState({ x: [], y: [], z: [], mag: [], labels: [] });
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
 
@@ -166,7 +167,7 @@ export default function App() {
         // Fire both requests simultaneously — don't wait for one before starting other
         const [res7, resLogs] = await Promise.all([
           fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/7day`, {}, 60000),
-          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=50`, {}, 60000)
+          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=250`, {}, 60000)
         ]);
         const [data7, dataLogs] = await Promise.all([res7.json(), resLogs.json()]);
         if (!isSubscribed) return;
@@ -194,7 +195,7 @@ export default function App() {
       isSubscribed = false;
       if (retryTimerId) clearTimeout(retryTimerId);
     };
-  }, [currentCowId, activeTab, isAuthenticated]);
+  }, [currentCowId, activeTab, isAuthenticated, refresh7DayTrigger]);
 
   // 2. Real-time Telemetry Stream Loop (with in-flight guard + error backoff)
   useEffect(() => {
@@ -366,6 +367,7 @@ export default function App() {
               cowId={currentCowId}
               theme={theme}
               isLoading={is7DayLoading}
+              onRefresh={() => setRefresh7DayTrigger(prev => prev + 1)}
             />
           )}
 
