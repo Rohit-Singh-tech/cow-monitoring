@@ -10,7 +10,7 @@ services:
     startCommand: "python run.py"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.8
+        value: 3.11.9
       - key: MODEL_PATH
         value: "../cow_ml_models/trained_models/cow_health_xgboost_models.pkl"
       # Ensure DATABASE_URL is managed in Render dashboard (do not sync it from code)
