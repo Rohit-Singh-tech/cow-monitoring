@@ -49,6 +49,7 @@ _LAST_VALID_7DAY: Dict[str, Any] = {}
 _LAST_VALID_LOGS: Dict[str, Any] = {}
 _AWS_DAILY_SUMMARIES: Dict[str, Dict[str, dict]] = {}  # {device_id: {date_str_yyyy_mm_dd: summary_dict}}
 _LAST_KNOWN_TELEMETRY: Dict[str, dict] = {}  # {device_id: {telemetry, accelBuffer, timestamp}}
+_DISCOVERED_AWS_DEVICES: set = set()
 
 def _save_snapshot():
     try:
@@ -56,7 +57,8 @@ def _save_snapshot():
             "dashboard": _LAST_VALID_DASHBOARD,
             "daily_summaries": _AWS_DAILY_SUMMARIES,
             "logs": _LAST_VALID_LOGS,
-            "last_known_telemetry": _LAST_KNOWN_TELEMETRY
+            "last_known_telemetry": _LAST_KNOWN_TELEMETRY,
+            "discovered_devices": sorted(list(_DISCOVERED_AWS_DEVICES), key=lambda x: int(x) if str(x).isdigit() else str(x))
         }
         with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -64,7 +66,7 @@ def _save_snapshot():
         logger.warning(f"Error saving AWS telemetry snapshot: {e}")
 
 def _load_snapshot():
-    global _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _AWS_CACHE, _AWS_DAILY_SUMMARIES, _LAST_KNOWN_TELEMETRY
+    global _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _AWS_CACHE, _AWS_DAILY_SUMMARIES, _LAST_KNOWN_TELEMETRY, _DISCOVERED_AWS_DEVICES
     if not os.path.exists(SNAPSHOT_FILE):
         return
     try:
@@ -73,6 +75,9 @@ def _load_snapshot():
             _LAST_VALID_DASHBOARD.update(data.get("dashboard", {}))
             _LAST_VALID_LOGS.update(data.get("logs", {}))
             _LAST_KNOWN_TELEMETRY.update(data.get("last_known_telemetry", {}))
+            saved_devs = data.get("discovered_devices", [])
+            if saved_devs:
+                _DISCOVERED_AWS_DEVICES.update(str(x).strip() for x in saved_devs)
 
             # Load daily summaries (device_id -> date_str -> summary)
             saved_daily = data.get("daily_summaries", {})
@@ -175,6 +180,7 @@ def _load_snapshot():
 _AWS_CACHE: Dict[str, Dict[str, Any]] = {}
 _HERD_ITEMS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": []}
 _METADATA_CACHE: Dict[str, Dict[str, Any]] = {}
+_TAG_AWS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": set()}
 _ML_PREDICTION_CACHE: Dict[str, Any] = {}
 _HERD_IS_REFRESHING = False
 _REFRESH_THREAD_LOCK = threading.Lock()
@@ -194,6 +200,17 @@ def _get_device_lock(dev_id: str) -> threading.Lock:
 
 # Load persistent snapshot immediately on module load
 _load_snapshot()
+_DISCOVERED_AWS_DEVICES.update(str(x).strip() for x in settings.AWS_ENABLED_DEVICE_IDS)
+
+# Discovery state controls
+_LAST_DISCOVERY_TIME = 0.0
+_DISCOVERY_LOCK = threading.Lock()
+_DISCOVERY_IN_PROGRESS = False
+_DISCOVERY_DAEMON_STARTED = False
+
+def _device_sort_key(dev_id: str):
+    clean = str(dev_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+    return (0, int(clean)) if clean.isdigit() else (1, clean)
 
 
 def _parse_timestamp(pkt: dict) -> datetime:
@@ -388,27 +405,203 @@ class AwsTelemetryService:
     @classmethod
     def clear_cache(cls):
         """Clears metadata and herd caches for tag updates without wiping telemetry."""
-        global _HERD_ITEMS_CACHE, _METADATA_CACHE, _TAGS_LOADED_AT
+        global _HERD_ITEMS_CACHE, _METADATA_CACHE, _TAGS_LOADED_AT, _TAG_AWS_CACHE
         _HERD_ITEMS_CACHE = {"expires_at": 0.0, "data": []}
         _METADATA_CACHE.clear()
         _TAGS_LOADED_AT = 0.0
+        _TAG_AWS_CACHE = {"expires_at": 0.0, "data": set()}
         logger.info("Cleared AWS metadata & herd caches.")
 
     @classmethod
     def clear_all_telemetry_cache(cls):
         """Forces immediate wipe of telemetry caches and snapshots for fresh calculation."""
-        global _AWS_CACHE, _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _HERD_ITEMS_CACHE
+        global _AWS_CACHE, _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _HERD_ITEMS_CACHE, _TAG_AWS_CACHE
         _AWS_CACHE.clear()
         _LAST_VALID_DASHBOARD.clear()
         _LAST_VALID_7DAY.clear()
         _LAST_VALID_LOGS.clear()
         _HERD_ITEMS_CACHE = {"expires_at": 0.0, "data": []}
+        _TAG_AWS_CACHE = {"expires_at": 0.0, "data": set()}
         if os.path.exists(SNAPSHOT_FILE):
             try:
                 os.remove(SNAPSHOT_FILE)
             except Exception:
                 pass
         logger.info("Cleared all AWS telemetry caches and removed snapshot file.")
+
+    @classmethod
+    def get_known_device_ids(cls) -> List[str]:
+        """
+        Dynamically aggregates all known AWS device IDs:
+        1. Default configured IDs from settings.AWS_ENABLED_DEVICE_IDS
+        2. Auto-discovered active AWS device IDs from _DISCOVERED_AWS_DEVICES
+        3. Registered AWS tags from TagRegistry DB (cached for 60s)
+        """
+        global _TAG_AWS_CACHE
+        all_ids = set()
+        for dev_id in settings.AWS_ENABLED_DEVICE_IDS:
+            all_ids.add(str(dev_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip())
+        for dev_id in _DISCOVERED_AWS_DEVICES:
+            all_ids.add(str(dev_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip())
+
+        # Check TagRegistry for any devices prefixed with aws- or tagged as AWS (with 60s cache)
+        now_ts = time.time()
+        if _TAG_AWS_CACHE.get("expires_at", 0) > now_ts:
+            all_ids.update(_TAG_AWS_CACHE.get("data", set()))
+        else:
+            tag_ids = set()
+            try:
+                from app.database import SessionLocal
+                from app.models.tag_registry import TagRegistry
+                with SessionLocal() as db:
+                    tags = db.query(TagRegistry.device_id, TagRegistry.notes).all()
+                    for tag_dev_id, tag_notes in tags:
+                        s = str(tag_dev_id).strip()
+                        if s.lower().startswith("aws-") or s.lower().startswith("aws ") or s.lower().startswith("aws#"):
+                            clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+                            tag_ids.add(clean)
+                        elif tag_notes and "aws" in tag_notes.lower():
+                            clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+                            tag_ids.add(clean)
+                _TAG_AWS_CACHE = {"expires_at": now_ts + 60.0, "data": tag_ids}
+                all_ids.update(tag_ids)
+            except Exception:
+                pass
+
+        return sorted(list(all_ids), key=_device_sort_key)
+
+    @classmethod
+    def is_aws_device(cls, cow_id: str) -> bool:
+        """Determines if cow_id belongs to an AWS Collar node."""
+        if not cow_id:
+            return False
+        s = str(cow_id).strip()
+        s_clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        if s.lower().startswith("aws-") or s.lower().startswith("aws ") or s.lower().startswith("aws#"):
+            return True
+        known = set(cls.get_known_device_ids())
+        if s_clean in known:
+            return True
+        # On-demand probe if not yet known
+        if cls.check_and_register_device(s_clean):
+            return True
+        return False
+
+    @classmethod
+    def check_and_register_device(cls, dev_id: str) -> bool:
+        """
+        Direct on-demand check if AWS has data for an individual device ID.
+        If found, immediately registers it into _DISCOVERED_AWS_DEVICES, saves snapshot,
+        and invalidates herd overview cache so it appears immediately.
+        """
+        if not dev_id:
+            return False
+        clean_id = str(dev_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        if clean_id in _DISCOVERED_AWS_DEVICES:
+            return True
+
+        now = datetime.now(timezone.utc)
+        today_str = now.strftime("%d-%m-%Y")
+        yesterday_str = (now - timedelta(days=1)).strftime("%d-%m-%Y")
+
+        for d_str in [today_str, yesterday_str, "22-09-2026"]:
+            try:
+                pkts = cls.fetch_aws_raw(clean_id, start_date=d_str, end_date=d_str)
+                if pkts:
+                    _DISCOVERED_AWS_DEVICES.add(clean_id)
+                    _save_snapshot()
+                    cls.clear_cache()
+                    logger.info(f"On-demand auto-discovered active AWS device: {clean_id}")
+                    return True
+            except Exception as e:
+                logger.debug(f"Probe error for device {clean_id} on {d_str}: {e}")
+        return False
+
+    @classmethod
+    def discover_devices(cls, max_device_id: int = None, force: bool = False) -> List[str]:
+        """
+        Scans candidate AWS device IDs across range(1, max_device_id + 1) in parallel.
+        Discovers any new active collar devices transmitting to AWS.
+        Registers newly found devices, saves snapshot, and invalidates herd cache.
+        """
+        global _LAST_DISCOVERY_TIME, _DISCOVERY_IN_PROGRESS
+        now_ts = time.time()
+
+        with _DISCOVERY_LOCK:
+            if _DISCOVERY_IN_PROGRESS:
+                return []
+            if not force and (now_ts - _LAST_DISCOVERY_TIME) < (settings.AWS_AUTO_DISCOVERY_INTERVAL_MINUTES * 60):
+                return []
+            _DISCOVERY_IN_PROGRESS = True
+
+        try:
+            scan_limit = max_device_id or settings.AWS_DISCOVERY_SCAN_MAX
+            now = datetime.now(timezone.utc)
+            today_str = now.strftime("%d-%m-%Y")
+            yesterday_str = (now - timedelta(days=1)).strftime("%d-%m-%Y")
+
+            candidates = [str(i) for i in range(1, scan_limit + 1)]
+            newly_found = []
+
+            def probe_candidate(dev_str: str):
+                for target_date in [today_str, yesterday_str]:
+                    try:
+                        pkts = cls.fetch_aws_raw(dev_str, start_date=target_date, end_date=target_date)
+                        if pkts:
+                            return dev_str, len(pkts)
+                    except Exception:
+                        pass
+                return dev_str, 0
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                results = executor.map(probe_candidate, candidates)
+                for dev_str, pkt_count in results:
+                    if pkt_count > 0:
+                        if dev_str not in _DISCOVERED_AWS_DEVICES:
+                            _DISCOVERED_AWS_DEVICES.add(dev_str)
+                            newly_found.append(dev_str)
+                            logger.info(f"Auto-discovered new active AWS device ID {dev_str} ({pkt_count} packets).")
+
+            _LAST_DISCOVERY_TIME = time.time()
+            if newly_found:
+                _save_snapshot()
+                cls.clear_cache()
+                logger.info(f"AWS auto-discovery completed. Added {len(newly_found)} new devices: {newly_found}")
+            return newly_found
+        except Exception as e:
+            logger.error(f"Error during AWS auto-discovery scan: {e}")
+            return []
+        finally:
+            with _DISCOVERY_LOCK:
+                _DISCOVERY_IN_PROGRESS = False
+
+    @classmethod
+    def start_discovery_daemon(cls):
+        """Starts periodic background discovery thread to auto-detect any newly added AWS collars."""
+        global _DISCOVERY_DAEMON_STARTED
+        with _DISCOVERY_LOCK:
+            if _DISCOVERY_DAEMON_STARTED:
+                return
+            _DISCOVERY_DAEMON_STARTED = True
+
+        def daemon_loop():
+            # Initial discovery run shortly after server boot
+            time.sleep(3)
+            logger.info("Starting initial AWS device auto-discovery scan...")
+            cls.discover_devices(force=True)
+
+            while True:
+                try:
+                    interval_secs = max(60, settings.AWS_AUTO_DISCOVERY_INTERVAL_MINUTES * 60)
+                    time.sleep(interval_secs)
+                    cls.discover_devices()
+                except Exception as e:
+                    logger.warning(f"Error in AWS discovery daemon loop: {e}")
+                    time.sleep(60)
+
+        t = threading.Thread(target=daemon_loop, daemon=True, name="AwsDeviceAutoDiscoveryDaemon")
+        t.start()
+        logger.info("AWS device auto-discovery background daemon initialized.")
 
     @classmethod
     def load_all_tag_metadata(cls):
@@ -442,8 +635,8 @@ class AwsTelemetryService:
         except Exception as e:
             logger.warning(f"Error preloading TagRegistry: {e}")
 
-        # Ensure all configured AWS devices have default cache entries
-        for dev_id in settings.AWS_ENABLED_DEVICE_IDS:
+        # Ensure all configured & discovered AWS devices have default cache entries
+        for dev_id in cls.get_known_device_ids():
             dev_str = str(dev_id).strip()
             clean_id = dev_str.lower().replace("aws-", "")
             if clean_id not in _METADATA_CACHE:
@@ -1021,7 +1214,7 @@ class AwsTelemetryService:
         Returns in 0ms so the HTTP request NEVER hangs.
         """
         if not device_ids:
-            device_ids = settings.AWS_ENABLED_DEVICE_IDS
+            device_ids = cls.get_known_device_ids()
 
         items = []
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -1079,15 +1272,15 @@ class AwsTelemetryService:
             _HERD_IS_REFRESHING = True
 
         if not device_ids:
-            device_ids = settings.AWS_ENABLED_DEVICE_IDS
+            device_ids = cls.get_known_device_ids()
 
         def worker():
             global _HERD_IS_REFRESHING, _HERD_ITEMS_CACHE
             try:
                 cls.load_all_tag_metadata()
                 items = []
-                # Use max_workers=2 to prevent saturating Render's 0.1 vCPU
-                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                # Use max_workers=6 for fast parallel retrieval of all collar nodes
+                with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
                     future_to_dev = {executor.submit(cls._fetch_single_herd_item, dev_id): dev_id for dev_id in device_ids}
                     for future in concurrent.futures.as_completed(future_to_dev):
                         try:
@@ -1099,8 +1292,7 @@ class AwsTelemetryService:
                             logger.warning(f"Error fetching AWS overview item for dev {dev_id}: {e}")
 
                 if items:
-                    device_order = {str(d).strip(): idx for idx, d in enumerate(device_ids)}
-                    items.sort(key=lambda x: device_order.get(x["device_id"], 999))
+                    items.sort(key=lambda x: _device_sort_key(x["device_id"]))
                     _HERD_ITEMS_CACHE = {
                         "expires_at": time.time() + CACHE_TTL_SECONDS,
                         "data": items
@@ -1126,7 +1318,11 @@ class AwsTelemetryService:
         now = time.time()
 
         if not device_ids:
-            device_ids = settings.AWS_ENABLED_DEVICE_IDS
+            device_ids = cls.get_known_device_ids()
+
+        # Opportunistic background auto-discovery trigger if interval elapsed
+        if (now - _LAST_DISCOVERY_TIME) > (settings.AWS_AUTO_DISCOVERY_INTERVAL_MINUTES * 60):
+            threading.Thread(target=cls.discover_devices, daemon=True, name="AwsAutoDiscoveryWorker").start()
 
         # If cache exists and is fresh, return immediately
         if not force_refresh and _HERD_ITEMS_CACHE.get("expires_at", 0) > now and _HERD_ITEMS_CACHE.get("data"):

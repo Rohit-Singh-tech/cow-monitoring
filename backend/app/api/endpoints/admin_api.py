@@ -23,6 +23,7 @@ class TagCreateRequest(BaseModel):
     weight: Optional[str] = None
     notes: Optional[str] = None
     description: Optional[str] = None
+    source: Optional[str] = None
 
 class TagUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -31,6 +32,7 @@ class TagUpdateRequest(BaseModel):
     weight: Optional[str] = None
     notes: Optional[str] = None
     description: Optional[str] = None
+    source: Optional[str] = None
 
 @router.get("/users")
 def get_users(db: Session = Depends(get_db)):
@@ -140,6 +142,16 @@ def create_or_upsert_tag(request: TagCreateRequest, db: Session = Depends(get_db
 
     db.commit()
     db.refresh(tag)
+
+    # If this is an AWS device or requested as aws_api, register it dynamically
+    try:
+        from app.services.aws_service import AwsTelemetryService, _DISCOVERED_AWS_DEVICES, _save_snapshot
+        clean_id = dev_str.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        if dev_str.lower().startswith("aws-") or request.source == "aws_api" or AwsTelemetryService.check_and_register_device(clean_id):
+            _DISCOVERED_AWS_DEVICES.add(clean_id)
+            _save_snapshot()
+    except Exception:
+        pass
 
     invalidate_tags_cache()
 

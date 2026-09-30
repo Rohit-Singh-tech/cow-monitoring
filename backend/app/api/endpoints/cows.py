@@ -22,17 +22,26 @@ def resolve_aws_device_id(cow_id: str) -> Optional[str]:
     """
     Checks if cow_id refers to an AWS Collar device.
     Supports formats like 'aws-8', 'AWS-8', 'aws 8', 'AWS 8', 'AWS#8', and '8'
-    (matching configured settings.AWS_ENABLED_DEVICE_IDS).
+    (matching configured settings.AWS_ENABLED_DEVICE_IDS, auto-discovered devices, and TagRegistry).
     """
     if not cow_id:
         return None
     s = str(cow_id).strip()
     s_clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-    aws_set = set([str(x).strip() for x in settings.AWS_ENABLED_DEVICE_IDS])
-    if s_clean in aws_set:
-        return s_clean
+
+    # Explicit AWS prefix
     if s.lower().startswith("aws-") or s.lower().startswith("aws ") or s.lower().startswith("aws#"):
         return s_clean
+
+    # Known AWS devices (configured + discovered + TagRegistry)
+    known = set(AwsTelemetryService.get_known_device_ids())
+    if s_clean in known:
+        return s_clean
+
+    # On-demand probe against AWS for unmapped numeric/string IDs
+    if AwsTelemetryService.check_and_register_device(s_clean):
+        return s_clean
+
     return None
 
 
@@ -294,7 +303,7 @@ def resolve_db_cow(cow_id: str, db: Session):
         # First match by device_id (e.g. '17', 'COW-BLE-001')
         cow = db.query(TagRegistry).filter(TagRegistry.device_id == s).first()
         # Second match by primary key id (only if not an AWS collar ID)
-        if not cow and s.isdigit() and s not in settings.AWS_ENABLED_DEVICE_IDS:
+        if not cow and s.isdigit() and not AwsTelemetryService.is_aws_device(s):
             cow = db.query(TagRegistry).filter(TagRegistry.id == int(s)).first()
     except Exception as e:
         logger.warning(f"Error querying TagRegistry for {cow_id}: {e}")
@@ -341,7 +350,7 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     if not cow:
         # Check if cow_id can be resolved via AWS directly
         clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
+        if AwsTelemetryService.is_aws_device(clean_id):
             return AwsTelemetryService.get_live_dashboard(clean_id, target_date=target_date)
         raise HTTPException(status_code=404, detail=f"No cattle node registered for ID '{cow_id}'.")
 
@@ -583,7 +592,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     cow = resolve_db_cow(cow_id, db)
     if not cow:
         clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
+        if AwsTelemetryService.is_aws_device(clean_id):
             return AwsTelemetryService.get_7day_activity(clean_id)
         raise HTTPException(status_code=404, detail=f"No cattle node registered for ID '{cow_id}'.")
 

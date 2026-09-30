@@ -91,15 +91,18 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning(f"DB prewarm error: {e}")
                 
-                # 2. Warm AWS items and all enabled AWS cows in parallel
+                # 2. Warm AWS items and start discovery daemon
                 try:
+                    # Start auto-discovery daemon to continuously detect new collars in AWS
+                    AwsTelemetryService.start_discovery_daemon()
                     from concurrent.futures import ThreadPoolExecutor
                     AwsTelemetryService.get_herd_overview_items()
-                    with ThreadPoolExecutor(max_workers=4) as executor:
-                        list(executor.map(AwsTelemetryService.get_live_dashboard, settings.AWS_ENABLED_DEVICE_IDS))
+                    known_ids = AwsTelemetryService.get_known_device_ids()
+                    with ThreadPoolExecutor(max_workers=6) as executor:
+                        list(executor.map(AwsTelemetryService.get_live_dashboard, known_ids))
                     AwsTelemetryService.get_7day_activity("8")
                     AwsTelemetryService.get_activity_logs("8")
-                    logger.info(f"Pre-warmed live dashboards for AWS devices: {settings.AWS_ENABLED_DEVICE_IDS}")
+                    logger.info(f"Pre-warmed live dashboards for {len(known_ids)} AWS devices: {known_ids}")
                 except Exception as e:
                     logger.warning(f"AWS prewarm error: {e}")
 
@@ -205,6 +208,19 @@ def api_clear_aws_cache():
     AwsTelemetryService.clear_all_telemetry_cache()
     return {"success": True, "message": "All AWS telemetry caches and snapshots cleared."}
 
+@app.post("/api/aws/discover", tags=["Admin"])
+def api_discover_aws_devices(max_id: Optional[int] = None):
+    """Triggers on-demand discovery scan for new AWS collar devices."""
+    from app.services.aws_service import AwsTelemetryService
+    found = AwsTelemetryService.discover_devices(max_device_id=max_id, force=True)
+    all_known = AwsTelemetryService.get_known_device_ids()
+    return {
+        "success": True,
+        "message": f"Discovery scan complete. Found {len(found)} new devices.",
+        "newly_discovered": found,
+        "all_known_aws_devices": all_known
+    }
+
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
 def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
     """Activity log using pre-computed ML inferences or AWS API."""
@@ -225,7 +241,7 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     cow = resolve_db_cow(cow_id, db)
     if not cow:
         clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        if clean_id in settings.AWS_ENABLED_DEVICE_IDS:
+        if AwsTelemetryService.is_aws_device(clean_id):
             return AwsTelemetryService.get_activity_logs(clean_id, page=page, limit=limit)
         return {"success": True, "logs": [], "page": page, "limit": limit, "source": "render_db"}
         

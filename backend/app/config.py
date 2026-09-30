@@ -33,7 +33,14 @@ class Settings(BaseSettings):
         "AWS_COWNECK_API_URL",
         "https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function"
     )
-    AWS_ENABLED_DEVICE_IDS: List[str] = ["8", "7", "9", "1", "3", "4", "5", "6"]
+    AWS_ENABLED_DEVICE_IDS: List[str] = [
+        x.strip() for x in os.getenv(
+            "AWS_ENABLED_DEVICE_IDS",
+            "1,3,4,5,6,7,8,9,11,12,13,14,15,19,20,21,23,32,36,37,38,40,41,43,44,46,48,49,50,59"
+        ).split(",") if x.strip()
+    ]
+    AWS_DISCOVERY_SCAN_MAX: int = int(os.getenv("AWS_DISCOVERY_SCAN_MAX", "100"))
+    AWS_AUTO_DISCOVERY_INTERVAL_MINUTES: int = int(os.getenv("AWS_AUTO_DISCOVERY_INTERVAL_MINUTES", "10"))
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), "..", ".env"), 
