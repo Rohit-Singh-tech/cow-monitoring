@@ -162,7 +162,7 @@ admin.add_view(RawPacketAdmin)
 admin.add_view(DataloggerHeaderAdmin)
 admin.add_view(ActivityConfigAdmin)
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def root():
     return {
         "message": "Welcome to Cow Monitoring API",
@@ -171,8 +171,8 @@ def root():
     }
 
 # Health checks for Render deployment
-@app.get("/health", tags=["Health"])
-@app.get(f"{settings.API_V1_STR}/health", tags=["Health"])
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
+@app.api_route(f"{settings.API_V1_STR}/health", methods=["GET", "HEAD"], tags=["Health"])
 def health_check():
     ml_mgr = get_ml_manager()
     return {

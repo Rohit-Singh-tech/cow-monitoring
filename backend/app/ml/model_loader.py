@@ -9,7 +9,8 @@ from app.config import settings
 from app.ml.feature_extractor import extract_67_features
 
 # Suppress sklearn UserWarning about feature names
-warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*valid feature names.*")
 
 logger = logging.getLogger("cow_logger.ml")
 

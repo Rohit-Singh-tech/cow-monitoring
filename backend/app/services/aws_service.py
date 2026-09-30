@@ -51,22 +51,36 @@ _AWS_DAILY_SUMMARIES: Dict[str, Dict[str, dict]] = {}  # {device_id: {date_str_y
 _LAST_KNOWN_TELEMETRY: Dict[str, dict] = {}  # {device_id: {telemetry, accelBuffer, timestamp}}
 _DISCOVERED_AWS_DEVICES: set = set()
 
+_SNAPSHOT_LOCK = threading.Lock()
+
 def _save_snapshot():
-    try:
-        with _GLOBAL_LOCK:
-            data = {
-                "dashboard": dict(_LAST_VALID_DASHBOARD),
-                "daily_summaries": {k: dict(v) for k, v in _AWS_DAILY_SUMMARIES.items()},
-                "logs": dict(_LAST_VALID_LOGS),
-                "last_known_telemetry": dict(_LAST_KNOWN_TELEMETRY),
-                "discovered_devices": sorted(list(_DISCOVERED_AWS_DEVICES), key=lambda x: int(x) if str(x).isdigit() else str(x))
-            }
-        tmp_file = SNAPSHOT_FILE + ".tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        os.replace(tmp_file, SNAPSHOT_FILE)
-    except Exception as e:
-        logger.warning(f"Error saving AWS telemetry snapshot: {e}")
+    with _SNAPSHOT_LOCK:
+        tmp_file = None
+        try:
+            with _GLOBAL_LOCK:
+                data = {
+                    "dashboard": dict(_LAST_VALID_DASHBOARD),
+                    "daily_summaries": {k: dict(v) for k, v in _AWS_DAILY_SUMMARIES.items()},
+                    "logs": dict(_LAST_VALID_LOGS),
+                    "last_known_telemetry": dict(_LAST_KNOWN_TELEMETRY),
+                    "discovered_devices": sorted(list(_DISCOVERED_AWS_DEVICES), key=lambda x: int(x) if str(x).isdigit() else str(x))
+                }
+            parent_dir = os.path.dirname(SNAPSHOT_FILE)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            tid = threading.get_ident()
+            tmp_file = f"{SNAPSHOT_FILE}.{tid}.{time.time_ns()}.tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp_file, SNAPSHOT_FILE)
+        except Exception as e:
+            logger.warning(f"Error saving AWS telemetry snapshot: {e}")
+        finally:
+            if tmp_file and os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
 
 def _load_snapshot():
     global _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _AWS_CACHE, _AWS_DAILY_SUMMARIES, _LAST_KNOWN_TELEMETRY, _DISCOVERED_AWS_DEVICES
@@ -74,7 +88,10 @@ def _load_snapshot():
         return
     try:
         with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            raw_content = f.read().strip()
+            if not raw_content:
+                return
+            data = json.loads(raw_content)
             _LAST_VALID_DASHBOARD.update(data.get("dashboard", {}))
             _LAST_VALID_LOGS.update(data.get("logs", {}))
             _LAST_KNOWN_TELEMETRY.update(data.get("last_known_telemetry", {}))

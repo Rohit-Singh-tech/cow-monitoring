@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+.env
+.aws_telemetry_snapshot.json*
+*.tmp
