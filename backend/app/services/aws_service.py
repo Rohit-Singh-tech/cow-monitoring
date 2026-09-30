@@ -61,8 +61,10 @@ def _save_snapshot():
                 "last_known_telemetry": dict(_LAST_KNOWN_TELEMETRY),
                 "discovered_devices": sorted(list(_DISCOVERED_AWS_DEVICES), key=lambda x: int(x) if str(x).isdigit() else str(x))
             }
-        with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+        tmp_file = SNAPSHOT_FILE + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f)
+        os.replace(tmp_file, SNAPSHOT_FILE)
     except Exception as e:
         logger.warning(f"Error saving AWS telemetry snapshot: {e}")
 
