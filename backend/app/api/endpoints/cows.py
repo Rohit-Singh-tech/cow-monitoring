@@ -18,29 +18,62 @@ logger = logging.getLogger("cow_logger.cows")
 
 router = APIRouter()
 
+def is_explicit_aws_id(cow_id: str) -> bool:
+    """Checks if cow_id starts with an explicit AWS prefix."""
+    if not cow_id:
+        return False
+    s = str(cow_id).strip().lower()
+    return s.startswith("aws-") or s.startswith("aws ") or s.startswith("aws#")
+
+def extract_aws_device_id(cow_id: str) -> str:
+    """Extracts raw numeric or clean device identifier from AWS string."""
+    s = str(cow_id).strip()
+    return s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+
 def resolve_aws_device_id(cow_id: str) -> Optional[str]:
     """
     Checks if cow_id refers to an AWS Collar device.
-    Supports formats like 'aws-8', 'AWS-8', 'aws 8', 'AWS 8', 'AWS#8', and '8'
-    (matching configured settings.AWS_ENABLED_DEVICE_IDS, auto-discovered devices, and TagRegistry).
+    1. If explicitly prefixed with 'aws-' (e.g. 'aws-14', 'aws-8'), always routes to AWS.
+    2. If NOT prefixed with 'aws-':
+       - Checks if it exists in Render DB (TagRegistry or datalogger_headers).
+         If it exists in Render DB, it is a Gatewayless device -> returns None (handled by DB).
+       - Only if NOT in Render DB, falls back to AWS if known/discovered in AWS (for bare IDs like '8').
     """
     if not cow_id:
         return None
     s = str(cow_id).strip()
-    s_clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+    clean_id = extract_aws_device_id(s)
 
-    # Explicit AWS prefix
-    if s.lower().startswith("aws-") or s.lower().startswith("aws ") or s.lower().startswith("aws#"):
-        return s_clean
+    # 1. Explicit AWS prefix always routes to AWS
+    if is_explicit_aws_id(s):
+        return clean_id
 
-    # Known AWS devices (configured + discovered + TagRegistry)
+    # 2. Check if this unprefixed ID belongs to Render DB (Gatewayless)
+    try:
+        from app.database import SessionLocal
+        with SessionLocal() as session:
+            has_tag = session.query(TagRegistry.id).filter(
+                TagRegistry.device_id == s,
+                ~TagRegistry.device_id.ilike("aws-%")
+            ).first()
+            if has_tag:
+                return None
+            has_hdr = session.query(DataloggerHeader.id).filter(
+                DataloggerHeader.device_id == s
+            ).first()
+            if has_hdr:
+                return None
+    except Exception:
+        pass
+
+    # 3. Fallback: if NOT in Render DB, check if known in AWS
     known = set(AwsTelemetryService.get_known_device_ids())
-    if s_clean in known:
-        return s_clean
+    if clean_id in known:
+        return clean_id
 
-    # On-demand probe against AWS for unmapped numeric/string IDs
-    if AwsTelemetryService.check_and_register_device(s_clean):
-        return s_clean
+    # 4. On-demand probe against AWS for unmapped numeric/string IDs
+    if AwsTelemetryService.check_and_register_device(clean_id):
+        return clean_id
 
     return None
 
@@ -185,9 +218,31 @@ def get_herd_overview(db: Session = Depends(get_db)):
         db_items = _DB_HERD_CACHE["data"]
     else:
         try:
-            cows = db.query(TagRegistry).order_by(TagRegistry.id.asc()).all()
-            # Filter out TagRegistry entries that represent AWS devices
-            db_cows = [c for c in cows if resolve_aws_device_id(c.device_id) is None]
+            # Query registered tags that do not explicitly belong to AWS
+            cows = db.query(TagRegistry).filter(
+                ~TagRegistry.device_id.ilike("aws-%"),
+                ~TagRegistry.device_id.ilike("aws %")
+            ).order_by(TagRegistry.id.asc()).all()
+
+            # Auto-detect any newly transmitting devices in datalogger_headers not yet in TagRegistry
+            registered_dev_ids = {str(c.device_id).strip() for c in cows}
+            hdr_dev_rows = db.execute(text("SELECT DISTINCT device_id FROM datalogger_headers")).fetchall()
+            for (h_dev,) in hdr_dev_rows:
+                h_dev_str = str(h_dev).strip()
+                if h_dev_str and h_dev_str not in registered_dev_ids and not is_explicit_aws_id(h_dev_str):
+                    class AutoDetectedCow:
+                        def __init__(self, dev_id):
+                            self.id = int(dev_id) if dev_id.isdigit() else 999
+                            self.device_id = str(dev_id)
+                            self.name = f"Node #{dev_id}"
+                            self.breed = "Auto-detected"
+                            self.location = "Gatewayless Field"
+                            self.weight = None
+                            self.notes = "Auto-detected transmitting collar"
+                    cows.append(AutoDetectedCow(h_dev_str))
+                    registered_dev_ids.add(h_dev_str)
+
+            db_cows = cows
 
             if db_cows:
                 today = date.today()
@@ -289,21 +344,24 @@ def get_herd_overview(db: Session = Depends(get_db)):
 def resolve_db_cow(cow_id: str, db: Session):
     """
     Resolves a cow in the database by device_id or primary key id.
-    Returns TagRegistry object if found, or a proxy object if headers exist for device_id.
+    Returns TagRegistry object if found, or an auto-detected cow proxy if headers exist for device_id.
+    Never matches if cow_id starts with an explicit AWS prefix ('aws-').
     """
     if not cow_id:
         return None
-    # If this matches an AWS collar device, NEVER treat as a DB cow!
-    if resolve_aws_device_id(cow_id) is not None:
-        return None
     s = str(cow_id).strip()
+    if is_explicit_aws_id(s):
+        return None
 
     cow = None
     try:
-        # First match by device_id (e.g. '17', 'COW-BLE-001')
-        cow = db.query(TagRegistry).filter(TagRegistry.device_id == s).first()
-        # Second match by primary key id (only if not an AWS collar ID)
-        if not cow and s.isdigit() and not AwsTelemetryService.is_aws_device(s):
+        # First match by device_id (e.g. '17', '14', 'COW-BLE-001')
+        cow = db.query(TagRegistry).filter(
+            TagRegistry.device_id == s,
+            ~TagRegistry.device_id.ilike("aws-%")
+        ).first()
+        # Second match by primary key id
+        if not cow and s.isdigit():
             cow = db.query(TagRegistry).filter(TagRegistry.id == int(s)).first()
     except Exception as e:
         logger.warning(f"Error querying TagRegistry for {cow_id}: {e}")
@@ -311,16 +369,16 @@ def resolve_db_cow(cow_id: str, db: Session):
     if not cow:
         # Check if datalogger_headers exist for this device_id
         try:
-            has_hdr = db.query(DataloggerHeader.id).filter(DataloggerHeader.device_id == str(cow_id)).first()
+            has_hdr = db.query(DataloggerHeader.id).filter(DataloggerHeader.device_id == str(s)).first()
             if has_hdr:
                 class UnregisteredCow:
-                    id = int(cow_id) if str(cow_id).isdigit() else 999
-                    device_id = str(cow_id)
-                    name = f"Node #{cow_id}"
-                    breed = None
-                    location = None
+                    id = int(s) if s.isdigit() else 999
+                    device_id = str(s)
+                    name = f"Node #{s}"
+                    breed = "Auto-detected"
+                    location = "Gatewayless Field"
                     weight = None
-                    notes = None
+                    notes = "Auto-detected transmitting collar"
                 return UnregisteredCow()
         except Exception:
             pass

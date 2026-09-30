@@ -53,13 +53,14 @@ _DISCOVERED_AWS_DEVICES: set = set()
 
 def _save_snapshot():
     try:
-        data = {
-            "dashboard": _LAST_VALID_DASHBOARD,
-            "daily_summaries": _AWS_DAILY_SUMMARIES,
-            "logs": _LAST_VALID_LOGS,
-            "last_known_telemetry": _LAST_KNOWN_TELEMETRY,
-            "discovered_devices": sorted(list(_DISCOVERED_AWS_DEVICES), key=lambda x: int(x) if str(x).isdigit() else str(x))
-        }
+        with _GLOBAL_LOCK:
+            data = {
+                "dashboard": dict(_LAST_VALID_DASHBOARD),
+                "daily_summaries": {k: dict(v) for k, v in _AWS_DAILY_SUMMARIES.items()},
+                "logs": dict(_LAST_VALID_LOGS),
+                "last_known_telemetry": dict(_LAST_KNOWN_TELEMETRY),
+                "discovered_devices": sorted(list(_DISCOVERED_AWS_DEVICES), key=lambda x: int(x) if str(x).isdigit() else str(x))
+            }
         with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
     except Exception as e:
@@ -619,7 +620,11 @@ class AwsTelemetryService:
                 tags = db.query(TagRegistry).all()
                 for tag in tags:
                     dev_str = str(tag.device_id).strip()
-                    clean_id = dev_str.lower().replace("aws-", "")
+                    # Only apply TagRegistry records to AWS if explicitly marked as AWS (aws- prefix or notes)
+                    is_aws_tag = dev_str.lower().startswith("aws-") or (tag.notes and "aws" in tag.notes.lower())
+                    if not is_aws_tag:
+                        continue
+                    clean_id = dev_str.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
                     weight_val = f"{tag.weight} kg" if tag.weight and not str(tag.weight).endswith("kg") else (tag.weight or "480 kg")
                     tag_no = f"AWS {clean_id}"
                     meta = {
