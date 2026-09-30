@@ -184,6 +184,11 @@ def _load_snapshot():
         logger.info(f"Loaded persistent AWS telemetry snapshot with {len(_AWS_DAILY_SUMMARIES)} daily summary devices.")
     except Exception as e:
         logger.warning(f"Error loading AWS telemetry snapshot: {e}")
+        try:
+            if os.path.exists(SNAPSHOT_FILE):
+                os.remove(SNAPSHOT_FILE)
+        except Exception:
+            pass
 
 # In-memory caches for high-speed API performance
 _AWS_CACHE: Dict[str, Dict[str, Any]] = {}
