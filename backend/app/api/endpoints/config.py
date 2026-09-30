@@ -24,26 +24,30 @@ DEFAULT_ACTIVITIES_MAP = {
 _ACTIVITIES_CACHE = dict(DEFAULT_ACTIVITIES_MAP)
 
 @router.get("/activities")
-def get_activities():
+def get_activities(db: Session = Depends(get_db)):
     global _ACTIVITIES_CACHE
-    return {"success": True, "activities": _ACTIVITIES_CACHE}
-
     try:
-        configs = db.query(ActivityConfig).all()
-        if configs:
-            activity_map = {}
-            for cfg in configs:
-                activity_map[cfg.code] = {
-                    "code": cfg.code,
-                    "name": cfg.name,
-                    "color": cfg.color,
-                    "icon": cfg.icon,
-                    "category": cfg.category
-                }
-            _ACTIVITIES_CACHE = activity_map
-            return {"success": True, "activities": activity_map}
-    except Exception as e:
+        from app.database import SessionLocal
+        session = db if isinstance(db, Session) else SessionLocal()
+        try:
+            configs = session.query(ActivityConfig).all()
+            if configs:
+                activity_map = {}
+                for cfg in configs:
+                    activity_map[cfg.code] = {
+                        "code": cfg.code,
+                        "name": cfg.name,
+                        "color": cfg.color,
+                        "icon": cfg.icon,
+                        "category": cfg.category
+                    }
+                _ACTIVITIES_CACHE = activity_map
+                return {"success": True, "activities": activity_map}
+        finally:
+            if session is not db:
+                session.close()
+    except Exception:
         pass
 
-    return {"success": True, "activities": DEFAULT_ACTIVITIES_MAP}
+    return {"success": True, "activities": _ACTIVITIES_CACHE}
 

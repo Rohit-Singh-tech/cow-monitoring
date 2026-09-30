@@ -507,11 +507,9 @@ class AwsTelemetryService:
         if clean_id in _DISCOVERED_AWS_DEVICES:
             return True
 
-        now = datetime.now(timezone.utc)
-        today_str = now.strftime("%d-%m-%Y")
-        yesterday_str = (now - timedelta(days=1)).strftime("%d-%m-%Y")
-
-        for d_str in [today_str, yesterday_str, "22-09-2026"]:
+        # Probe today, yesterday, and past days in the rolling 7-day window dynamically
+        probe_dates = [(now - timedelta(days=i)).strftime("%d-%m-%Y") for i in range(7)]
+        for d_str in probe_dates:
             try:
                 pkts = cls.fetch_aws_raw(clean_id, start_date=d_str, end_date=d_str)
                 if pkts:

@@ -108,10 +108,12 @@ def update_daily_summaries(db, target_date=None):
     if target_date is None:
         target_date = date.today()
     
-    # Get all active devices
-    devices = db.query(TagRegistry.device_id).all()
-    
-    for (dev_id,) in devices:
+    # Get all active devices from TagRegistry and datalogger_headers
+    devs_from_tags = [d[0] for d in db.query(TagRegistry.device_id).all() if d[0]]
+    devs_from_hdrs = [d[0] for d in db.execute(text("SELECT DISTINCT device_id FROM datalogger_headers")).fetchall() if d[0]]
+    devices = sorted(list(set(devs_from_tags) | set(devs_from_hdrs)))
+
+    for dev_id in devices:
         try:
             # Count today's packets and aggregate ML results
             sql = text("""

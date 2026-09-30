@@ -105,7 +105,9 @@ def clear_db_cow_caches(device_id: Optional[str] = None):
     """Invalidate DB cow caches when new data is ingested or tags modified."""
     global _DB_COW_CURRENT_CACHE, _DB_COW_7DAY_CACHE, _DB_HERD_CACHE
     if device_id:
+        _DB_COW_CURRENT_CACHE.pop(f"db_{device_id}", None)
         _DB_COW_CURRENT_CACHE.pop(str(device_id), None)
+        _DB_COW_7DAY_CACHE.pop(f"db_{device_id}", None)
         _DB_COW_7DAY_CACHE.pop(str(device_id), None)
     else:
         _DB_COW_CURRENT_CACHE.clear()
@@ -399,7 +401,7 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
 
     # Check cache FIRST before any DB queries
     now_ts = time.time()
-    cache_entry = _DB_COW_CURRENT_CACHE.get(str(cow_id))
+    cache_entry = _DB_COW_CURRENT_CACHE.get(f"db_{cow_id}")
     if cache_entry and cache_entry["expires_at"] > now_ts:
         return cache_entry["data"]
 
@@ -414,7 +416,7 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
 
     dev_id = str(cow.device_id)
     now_ts = time.time()
-    cache_entry = _DB_COW_CURRENT_CACHE.get(dev_id)
+    cache_entry = _DB_COW_CURRENT_CACHE.get(f"db_{dev_id}")
     if cache_entry and cache_entry["expires_at"] > now_ts:
         return cache_entry["data"]
 
@@ -577,11 +579,11 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         },
         "ml_inference": ml_res
     }
-    _DB_COW_CURRENT_CACHE[str(dev_id)] = {
+    _DB_COW_CURRENT_CACHE[f"db_{dev_id}"] = {
         "expires_at": time.time() + 45.0,
         "data": res_data
     }
-    _DB_COW_CURRENT_CACHE[str(cow_id)] = {
+    _DB_COW_CURRENT_CACHE[f"db_{cow_id}"] = {
         "expires_at": time.time() + 45.0,
         "data": res_data
     }
@@ -643,7 +645,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
 
     # Check fast cache FIRST before any DB lookups (10 min TTL)
     now_ts = time.time()
-    cached_7day = _DB_COW_7DAY_CACHE.get(str(cow_id))
+    cached_7day = _DB_COW_7DAY_CACHE.get(f"db_{cow_id}")
     if cached_7day and cached_7day["expires_at"] > now_ts:
         return cached_7day["data"]
 
@@ -657,7 +659,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
     dev_id = cow.device_id
 
     # Also check cache by resolved dev_id
-    cached_7day = _DB_COW_7DAY_CACHE.get(str(dev_id))
+    cached_7day = _DB_COW_7DAY_CACHE.get(f"db_{dev_id}")
     if cached_7day and cached_7day["expires_at"] > now_ts:
         return cached_7day["data"]
 
@@ -765,11 +767,11 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         "estrusAlerts": [],
         "weeklyAverageHours": weekly_avg
     }
-    _DB_COW_7DAY_CACHE[str(dev_id)] = {
+    _DB_COW_7DAY_CACHE[f"db_{dev_id}"] = {
         "expires_at": time.time() + 600.0,
         "data": res_7day
     }
-    _DB_COW_7DAY_CACHE[str(cow_id)] = {
+    _DB_COW_7DAY_CACHE[f"db_{cow_id}"] = {
         "expires_at": time.time() + 600.0,
         "data": res_7day
     }

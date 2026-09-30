@@ -80,29 +80,39 @@ async def lifespan(app: FastAPI):
             loop = asyncio.get_event_loop()
             
             def run_warm():
-                # 1. Warm DB tags and herd overview
+                # 1. Warm DB tags and herd overview dynamically
                 try:
                     with SessionLocal() as db:
                         get_tags(db)
                         get_herd_overview(db)
-                        # Warm default DB cow 17
-                        get_cow_live_dashboard("17", db=db)
-                        get_cow_7day_activity("17", db=db)
+                        from app.models.tag_registry import TagRegistry
+                        first_tag = db.query(TagRegistry).filter(
+                            TagRegistry.device_id.isnot(None),
+                            ~TagRegistry.device_id.ilike("aws-%"),
+                            ~TagRegistry.device_id.ilike("aws %")
+                        ).first()
+                        if first_tag:
+                            first_id = str(first_tag.device_id)
+                            get_cow_live_dashboard(first_id, db=db)
+                            get_cow_7day_activity(first_id, db=db)
+                            logger.info(f"Pre-warmed live dashboard and 7-day data for DB cow: {first_id}")
                 except Exception as e:
                     logger.warning(f"DB prewarm error: {e}")
                 
-                # 2. Warm AWS items and start discovery daemon
+                # 2. Warm AWS items and start discovery daemon dynamically
                 try:
                     # Start auto-discovery daemon to continuously detect new collars in AWS
                     AwsTelemetryService.start_discovery_daemon()
                     from concurrent.futures import ThreadPoolExecutor
                     AwsTelemetryService.get_herd_overview_items()
                     known_ids = AwsTelemetryService.get_known_device_ids()
-                    with ThreadPoolExecutor(max_workers=6) as executor:
-                        list(executor.map(AwsTelemetryService.get_live_dashboard, known_ids))
-                    AwsTelemetryService.get_7day_activity("8")
-                    AwsTelemetryService.get_activity_logs("8")
-                    logger.info(f"Pre-warmed live dashboards for {len(known_ids)} AWS devices: {known_ids}")
+                    if known_ids:
+                        with ThreadPoolExecutor(max_workers=6) as executor:
+                            list(executor.map(AwsTelemetryService.get_live_dashboard, known_ids))
+                        first_aws = known_ids[0]
+                        AwsTelemetryService.get_7day_activity(first_aws)
+                        AwsTelemetryService.get_activity_logs(first_aws)
+                        logger.info(f"Pre-warmed live dashboards for {len(known_ids)} AWS devices: {known_ids}")
                 except Exception as e:
                     logger.warning(f"AWS prewarm error: {e}")
 
@@ -232,7 +242,7 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
         return AwsTelemetryService.get_activity_logs(aws_dev, page=page, limit=limit)
 
     # Check fast cache FIRST before any DB queries (180s TTL)
-    cache_key = f"{cow_id}_{page}_{limit}"
+    cache_key = f"db_{cow_id}_{page}_{limit}"
     now_ts = time.time()
     cached = _DB_ACT_LOGS_CACHE.get(cache_key)
     if cached and cached.get("expires_at", 0) > now_ts:
@@ -246,7 +256,7 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
         return {"success": True, "logs": [], "page": page, "limit": limit, "source": "render_db"}
         
     dev_id = cow.device_id
-    dev_cache_key = f"{dev_id}_{page}_{limit}"
+    dev_cache_key = f"db_{dev_id}_{page}_{limit}"
     cached = _DB_ACT_LOGS_CACHE.get(dev_cache_key)
     if cached and cached.get("expires_at", 0) > now_ts:
         return cached["data"]
@@ -377,3 +387,65 @@ def api_trigger_ble_dump(payload: dict = {}):
         "success": True,
         "message": "Authorized Knock-Knock Trigger (0x59 0x00 0xBB 0xCC) sent. Replaying 2,500 SPI Flash packets."
     }
+
+@app.post("/api/ble/trigger-reset", tags=["Frontend Compatibility"])
+def api_trigger_ble_reset(payload: dict = {}):
+    global _DB_ACT_LOGS_CACHE
+    _DB_ACT_LOGS_CACHE.clear()
+    try:
+        from app.api.endpoints.cows import clear_db_cow_caches
+        clear_db_cow_caches()
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "message": "Authorized Knock-Knock Reset Trigger (0x59 0x00 0xFF 0xFF) executed. Flash ring buffer reset."
+    }
+
+@app.get("/api/export/csv", tags=["Frontend Compatibility"])
+def api_export_csv(cowId: Optional[str] = None, cow_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Dynamic CSV export of activity transition logs for any cow (Gatewayless or AWS).
+    Works with both ?cowId= and ?cow_id= query parameters.
+    """
+    target_id = cowId or cow_id
+    if not target_id:
+        from app.models.tag_registry import TagRegistry
+        first_tag = db.query(TagRegistry).filter(TagRegistry.device_id.isnot(None)).first()
+        target_id = str(first_tag.device_id) if first_tag else "1"
+
+    log_res = api_get_cow_activity_log(target_id, page=1, limit=2000, db=db)
+    logs = log_res.get("logs", [])
+
+    import io
+    import csv
+    from fastapi.responses import Response
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Log ID", "Start Time (UTC)", "End Time (UTC)", "Activity Code",
+        "Activity Name", "Category", "Duration", "Duration (Minutes)",
+        "Confidence (%)", "Start Packet", "End Packet"
+    ])
+    for l in logs:
+        writer.writerow([
+            l.get("logId", ""),
+            l.get("startTime", ""),
+            l.get("endTime", ""),
+            l.get("activityCode", ""),
+            l.get("activityName", ""),
+            l.get("category", ""),
+            l.get("durationDisplay", ""),
+            l.get("durationMinutes", ""),
+            l.get("confidencePercent", ""),
+            l.get("startPacketId", ""),
+            l.get("endPacketId", "")
+        ])
+    csv_content = output.getvalue()
+    clean_filename = f"activity_logs_{str(target_id).replace('/', '_')}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={clean_filename}"}
+    )
