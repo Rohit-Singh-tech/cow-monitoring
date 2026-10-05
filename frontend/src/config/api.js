@@ -1,6 +1,23 @@
 // Centralized API configuration for Cow Logger Frontend
-// Uses VITE_API_URL environment variable if provided, otherwise defaults to relative path ('')
-// Relative path ('') works seamlessly for:
-// 1. Local Vite dev server (proxies /api to http://127.0.0.1:8000)
-// 2. Render static deployment (rewrites /api/* to backend URL with zero CORS preflight delay)
-export const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+// 1. If VITE_API_URL is explicitly set, use it.
+// 2. If running locally (localhost / 127.0.0.1), use relative path '' so Vite dev proxy handles requests.
+// 3. If deployed on a static hosting provider (e.g. Render static site cow-monitoring-li58.onrender.com),
+//    route directly to the live Render backend service.
+
+const getApiBase = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') {
+      return '';
+    }
+  }
+
+  // Production / Deployed environment fallback to live Render backend
+  return 'https://cow-monitoring01.onrender.com';
+};
+
+export const API_BASE = getApiBase();

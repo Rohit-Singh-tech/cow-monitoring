@@ -12,6 +12,7 @@ import {
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import { useConfig } from '../context/ConfigContext';
+import { API_BASE } from '../config/api';
 import { formatHours, formatDetailedDuration } from '../utils';
 
 ChartJS.register(
@@ -496,7 +497,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
                 <i className={`fa-solid fa-arrows-rotate ${isLoading ? 'fa-spin' : ''}`}></i> {isLoading ? 'SYNCING...' : 'REFRESH'}
               </button>
             )}
-            <a href={`/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer" style={{ height: '34px', fontSize: '0.78rem' }}>
+            <a href={`${API_BASE}/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer" style={{ height: '34px', fontSize: '0.78rem' }}>
               <i className="fa-solid fa-file-arrow-down"></i> EXPORT CSV
             </a>
           </div>

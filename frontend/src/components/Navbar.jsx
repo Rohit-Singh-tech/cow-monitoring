@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { API_BASE } from '../config/api';
 import { formatHours } from '../utils';
 
 export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump, onToggleMenu, isSidebarOpen, theme, onToggleTheme }) {
@@ -93,7 +94,7 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
 
             {/* DUMP LOGS CSV Button */}
             <a
-              href={`/api/export/csv?cowId=${currentCowId}`}
+              href={`${API_BASE}/api/export/csv?cowId=${currentCowId}`}
               className="btn btn-secondary btn-dump-logs"
               target="_blank"
               rel="noreferrer"
