@@ -46,16 +46,36 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
               value={currentCowId}
               onChange={(e) => onSelectCow(e.target.value)}
             >
-              {cows.map((c) => {
-                const isAws = c.source === 'aws_api' || String(c.id).startsWith('aws-');
-                const srcTag = isAws ? 'Aws' : 'Gatewayless';
-                const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
-                return (
-                  <option key={c.id} value={c.id}>
-                    [{srcTag}] #{c.device_id} - {c.name} ({healthTag})
-                  </option>
-                );
-              })}
+              {/* AWS Cloud IoT Nodes Group */}
+              {cows.some(c => c.source === 'aws_api' || String(c.id).startsWith('aws-')) && (
+                <optgroup label="☁️ AWS Cloud IoT Devices">
+                  {cows
+                    .filter(c => c.source === 'aws_api' || String(c.id).startsWith('aws-'))
+                    .map((c) => {
+                      const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
+                      return (
+                        <option key={c.id} value={c.id}>
+                          ☁️ AWS #{c.device_id} - {c.name} ({healthTag})
+                        </option>
+                      );
+                    })}
+                </optgroup>
+              )}
+              {/* Gatewayless Nodes Group */}
+              {cows.some(c => !(c.source === 'aws_api' || String(c.id).startsWith('aws-'))) && (
+                <optgroup label="🗄️ Gatewayless Collars">
+                  {cows
+                    .filter(c => !(c.source === 'aws_api' || String(c.id).startsWith('aws-')))
+                    .map((c) => {
+                      const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
+                      return (
+                        <option key={c.id} value={c.id}>
+                          🗄️ Node #{c.device_id} - {c.name} ({healthTag})
+                        </option>
+                      );
+                    })}
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -116,16 +136,36 @@ export default function Navbar({ cows, currentCowId, onSelectCow, onTriggerDump,
               value={currentCowId}
               onChange={(e) => onSelectCow(e.target.value)}
             >
-              {cows.map((c) => {
-                const isAws = c.source === 'aws_api' || String(c.id).startsWith('aws-');
-                const srcTag = isAws ? 'Aws' : 'Gatewayless';
-                const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
-                return (
-                  <option key={c.id} value={c.id}>
-                    [{srcTag}] #{c.device_id} - {c.name} ({healthTag})
-                  </option>
-                );
-              })}
+              {/* AWS Cloud IoT Nodes Group */}
+              {cows.some(c => c.source === 'aws_api' || String(c.id).startsWith('aws-')) && (
+                <optgroup label="☁️ AWS Cloud IoT Devices">
+                  {cows
+                    .filter(c => c.source === 'aws_api' || String(c.id).startsWith('aws-'))
+                    .map((c) => {
+                      const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
+                      return (
+                        <option key={c.id} value={c.id}>
+                          ☁️ AWS #{c.device_id} - {c.name} ({healthTag})
+                        </option>
+                      );
+                    })}
+                </optgroup>
+              )}
+              {/* Gatewayless Nodes Group */}
+              {cows.some(c => !(c.source === 'aws_api' || String(c.id).startsWith('aws-'))) && (
+                <optgroup label="🗄️ Gatewayless Collars">
+                  {cows
+                    .filter(c => !(c.source === 'aws_api' || String(c.id).startsWith('aws-')))
+                    .map((c) => {
+                      const healthTag = (c.health_risk_decision || 'HEALTHY').replace('_', ' ');
+                      return (
+                        <option key={c.id} value={c.id}>
+                          🗄️ Node #{c.device_id} - {c.name} ({healthTag})
+                        </option>
+                      );
+                    })}
+                </optgroup>
+              )}
             </select>
           </div>
         </div>
