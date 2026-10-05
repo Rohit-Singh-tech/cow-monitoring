@@ -331,13 +331,26 @@ class AwsTelemetryService:
                 e_dt = datetime.strptime(resolved_end, "%d-%m-%Y").date()
                 if s_dt > e_dt:
                     s_dt, e_dt = e_dt, s_dt
-                combined = []
+                day_strs = []
                 cur = s_dt
                 while cur <= e_dt:
-                    d_str = cur.strftime("%d-%m-%Y")
-                    day_pkts = AwsTelemetryService.fetch_aws_raw(device_id, start_date=d_str, end_date=d_str)
-                    combined.extend(day_pkts)
+                    day_strs.append(cur.strftime("%d-%m-%Y"))
                     cur += timedelta(days=1)
+
+                combined = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(day_strs))) as pool:
+                    future_to_day = {pool.submit(AwsTelemetryService.fetch_aws_raw, device_id, start_date=d, end_date=d): d for d in day_strs}
+                    # Keep sorted by date
+                    day_pkts_map = {}
+                    for fut in concurrent.futures.as_completed(future_to_day):
+                        d = future_to_day[fut]
+                        try:
+                            day_pkts_map[d] = fut.result()
+                        except Exception as e:
+                            logger.warning(f"Error fetching day {d} for {device_id}: {e}")
+                            day_pkts_map[d] = []
+                    for d in day_strs:
+                        combined.extend(day_pkts_map.get(d, []))
                 return combined
             except Exception as e:
                 logger.warning(f"Error expanding multi-day range {resolved_start}..{resolved_end}: {e}")
