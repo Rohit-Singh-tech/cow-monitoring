@@ -60,6 +60,7 @@ def _save_snapshot():
             with _GLOBAL_LOCK:
                 data = {
                     "dashboard": dict(_LAST_VALID_DASHBOARD),
+                    "seven_day": dict(_LAST_VALID_7DAY),
                     "daily_summaries": {k: dict(v) for k, v in _AWS_DAILY_SUMMARIES.items()},
                     "logs": dict(_LAST_VALID_LOGS),
                     "last_known_telemetry": dict(_LAST_KNOWN_TELEMETRY),
@@ -93,6 +94,7 @@ def _load_snapshot():
                 return
             data = json.loads(raw_content)
             _LAST_VALID_DASHBOARD.update(data.get("dashboard", {}))
+            _LAST_VALID_7DAY.update(data.get("seven_day", {}))
             _LAST_VALID_LOGS.update(data.get("logs", {}))
             _LAST_KNOWN_TELEMETRY.update(data.get("last_known_telemetry", {}))
             saved_devs = data.get("discovered_devices", [])
@@ -1075,7 +1077,7 @@ class AwsTelemetryService:
 
         def worker():
             try:
-                cls._compute_7day_activity(dev_key)
+                cls._refresh_7day_and_logs(dev_key)
             except Exception as e:
                 logger.warning(f"Error in background 7day refresh for dev {dev_key}: {e}")
             finally:
@@ -1083,6 +1085,101 @@ class AwsTelemetryService:
                     _7DAY_REFRESHING_SET.discard(dev_key)
 
         threading.Thread(target=worker, daemon=True, name=f"7DayRefresh-{dev_key}").start()
+
+    @classmethod
+    def _trigger_background_logs_refresh(cls, clean_id: str):
+        dev_key = str(clean_id).strip()
+        with _LOGS_REFRESH_LOCK:
+            if dev_key in _LOGS_REFRESHING_SET:
+                return
+            _LOGS_REFRESHING_SET.add(dev_key)
+
+        def worker():
+            try:
+                cls._refresh_7day_and_logs(dev_key)
+            except Exception as e:
+                logger.warning(f"Error in background logs refresh for dev {dev_key}: {e}")
+            finally:
+                with _LOGS_REFRESH_LOCK:
+                    _LOGS_REFRESHING_SET.discard(dev_key)
+
+        threading.Thread(target=worker, daemon=True, name=f"LogsRefresh-{dev_key}").start()
+
+    @classmethod
+    def _build_immediate_baseline_7day(cls, clean_id: str, dev_key: str) -> dict:
+        """Instantly (<1ms) construct a valid 7-day structure so the UI never blocks or times out."""
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
+        day_labels = [d.strftime("%a") for d in date_range]
+        date_labels = [d.strftime("%Y-%m-%d") for d in date_range]
+
+        dash = _LAST_VALID_DASHBOARD.get(clean_id) or _LAST_VALID_DASHBOARD.get(dev_key) or _LAST_VALID_DASHBOARD.get(f"aws-{clean_id}") or {}
+        health = dash.get("healthStatus", {})
+        today_mon = health.get("monitoredHoursToday", 0.0) or 0.0
+        today_rum = health.get("ruminationHoursToday", 0.0) or 0.0
+        today_lying = health.get("lyingHoursToday", 0.0) or 0.0
+        today_feed = health.get("feedingHoursToday", 0.0) or 0.0
+        today_move = health.get("movingHoursToday", 0.0) or 0.0
+        today_score = health.get("ruminationScore", 0) or 0
+        today_estrus = health.get("estrusProbabilityPercent", 0) or 0
+
+        rum_list, lying_list, feed_list, act_list = [], [], [], []
+        monitored_list, health_score_list, estrus_index_list = [], [], []
+
+        for d in date_range:
+            d_str = d.strftime("%Y-%m-%d")
+            s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str)
+            if s:
+                rum_list.append(s.get("rum_hours", 0.0) or 0.0)
+                lying_list.append(s.get("lying_hours", 0.0) or 0.0)
+                feed_list.append(s.get("feed_hours", 0.0) or 0.0)
+                act_list.append(s.get("move_hours", 0.0) or 0.0)
+                monitored_list.append(s.get("monitored_hours", 0.0) or 0.0)
+                health_score_list.append(s.get("health_score", 0) or 0)
+                estrus_index_list.append(s.get("estrus_index", 0) or 0)
+            elif d == today:
+                rum_list.append(today_rum)
+                lying_list.append(today_lying)
+                feed_list.append(today_feed)
+                act_list.append(today_move)
+                monitored_list.append(today_mon)
+                health_score_list.append(today_score)
+                estrus_index_list.append(today_estrus)
+            else:
+                rum_list.append(0.0)
+                lying_list.append(0.0)
+                feed_list.append(0.0)
+                act_list.append(0.0)
+                monitored_list.append(0.0)
+                health_score_list.append(0)
+                estrus_index_list.append(0)
+
+        weekly_avg = {
+            "RUS": round(sum(rum_list) / 7.0, 4),
+            "REL": round(sum(lying_list) / 7.0, 4),
+            "FEP": round(sum(feed_list) / 7.0, 4),
+            "MOV": round(sum(act_list) / 7.0, 4),
+            "RES": 0.0,
+            "DRN": 0.0
+        }
+
+        return {
+            "cowId": f"aws-{clean_id}",
+            "device_id": str(clean_id),
+            "source": "aws_api",
+            "days": day_labels,
+            "dates": date_labels,
+            "ruminationHours": rum_list,
+            "lyingRestHours": lying_list,
+            "feedingHours": feed_list,
+            "activeHours": act_list,
+            "monitoredHours": monitored_list,
+            "healthScores": health_score_list,
+            "estrusIndices": estrus_index_list,
+            "estrusAlerts": [],
+            "weeklyAverageHours": weekly_avg
+        }
 
     @classmethod
     def get_7day_activity(cls, device_id: str) -> dict:
@@ -1108,51 +1205,52 @@ class AwsTelemetryService:
             cls._trigger_background_7day_refresh(clean_id)
             return last_7d
 
-        return cls._compute_7day_activity(clean_id)
+        # Strictly non-blocking baseline: Build immediate baseline, cache it, trigger background refresh, and return
+        baseline = cls._build_immediate_baseline_7day(clean_id, dev_key)
+        _LAST_VALID_7DAY[clean_id] = baseline
+        _LAST_VALID_7DAY[dev_key] = baseline
+        cls._trigger_background_7day_refresh(clean_id)
+        return baseline
 
     @classmethod
     def _compute_7day_activity(cls, device_id: str) -> dict:
+        return cls._refresh_7day_and_logs(device_id)
+
+    @classmethod
+    def _refresh_7day_and_logs(cls, device_id: str) -> dict:
+        """
+        Single-query network optimization: Fetches the entire 7-day window in ONE call,
+        then updates daily summaries, 7-day trends, and activity transition logs simultaneously.
+        """
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         now = datetime.now(timezone.utc)
         today = now.date()
         today_str = today.strftime("%Y-%m-%d")
-        today_aws_fmt = today.strftime("%d-%m-%Y")
 
         date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
         day_labels = [d.strftime("%a") for d in date_range]
         date_labels = [d.strftime("%Y-%m-%d") for d in date_range]
 
-        cache_key = f"7day_{clean_id}_{today_str}"
+        start_aws_fmt = date_range[0].strftime("%d-%m-%Y")
+        end_aws_fmt = date_range[-1].strftime("%d-%m-%Y")
 
-        # Collect missing days for past days (d < today): fetch once and cache in _AWS_DAILY_SUMMARIES
-        missing_days = []
+        # Single range network request to AWS API (1-2s total)
+        all_packets = cls.get_processed_packets(clean_id, start_date=start_aws_fmt, end_date=end_aws_fmt)
+        if not all_packets:
+            today_aws_fmt = today.strftime("%d-%m-%Y")
+            all_packets = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt)
+
+        # 1. Partition packets by date and update daily summaries
+        packets_by_date = {}
+        for p in all_packets:
+            d = p["timestamp"].date()
+            packets_by_date.setdefault(d, []).append(p)
+
         for d in date_range:
-            d_str = d.strftime("%Y-%m-%d")
-            if d < today:
-                if clean_id not in _AWS_DAILY_SUMMARIES or d_str not in _AWS_DAILY_SUMMARIES[clean_id]:
-                    missing_days.append(d)
+            cls._update_daily_summary_from_packets(clean_id, d, packets_by_date.get(d, []))
 
-        if missing_days:
-            def fetch_single_day(d: date):
-                day_fmt = d.strftime("%d-%m-%Y")
-                return d, cls.get_processed_packets(clean_id, start_date=day_fmt, end_date=day_fmt)
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(missing_days))) as executor:
-                future_map = {executor.submit(fetch_single_day, d): d for d in missing_days}
-                for fut in concurrent.futures.as_completed(future_map):
-                    try:
-                        d, pkts = fut.result()
-                        cls._update_daily_summary_from_packets(clean_id, d, pkts)
-                    except Exception as e:
-                        d = future_map[fut]
-                        logger.warning(f"Error fetching AWS day {d} for {clean_id}: {e}")
-                        cls._update_daily_summary_from_packets(clean_id, d, [])
-
-        # Always fetch/refresh today's data directly so today's telemetry is ALWAYS accurate and live
-        today_pkts = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt)
-        cls._update_daily_summary_from_packets(clean_id, today, today_pkts)
-
+        # 2. Build 7-day metric arrays
         rum_list, lying_list, feed_list, act_list = [], [], [], []
         monitored_list, health_score_list, estrus_index_list = [], [], []
 
@@ -1179,7 +1277,7 @@ class AwsTelemetryService:
             "DRN": 0.0
         }
 
-        result = {
+        result_7d = {
             "cowId": f"aws-{clean_id}",
             "device_id": str(clean_id),
             "source": "aws_api",
@@ -1196,101 +1294,13 @@ class AwsTelemetryService:
             "weeklyAverageHours": weekly_avg
         }
 
-        _LAST_VALID_7DAY[clean_id] = result
-        _LAST_VALID_7DAY[dev_key] = result
-        _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": result}
-        _save_snapshot()
-        return result
+        _LAST_VALID_7DAY[clean_id] = result_7d
+        _LAST_VALID_7DAY[dev_key] = result_7d
+        cache_key_7d = f"7day_{clean_id}_{today_str}"
+        _AWS_CACHE[cache_key_7d] = {"expires_at": time.time() + 60.0, "data": result_7d}
 
-    @classmethod
-    def _trigger_background_logs_refresh(cls, clean_id: str):
-        dev_key = str(clean_id).strip()
-        with _LOGS_REFRESH_LOCK:
-            if dev_key in _LOGS_REFRESHING_SET:
-                return
-            _LOGS_REFRESHING_SET.add(dev_key)
-
-        def worker():
-            try:
-                cls._compute_activity_logs(dev_key)
-            except Exception as e:
-                logger.warning(f"Error in background logs refresh for dev {dev_key}: {e}")
-            finally:
-                with _LOGS_REFRESH_LOCK:
-                    _LOGS_REFRESHING_SET.discard(dev_key)
-
-        threading.Thread(target=worker, daemon=True, name=f"LogsRefresh-{dev_key}").start()
-
-    @classmethod
-    def get_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
-        """
-        Builds chronological activity transition logs for an AWS device across the 7-day window.
-        STRICTLY NON-BLOCKING: Returns immediately from cache or snapshot (<2ms) and refreshes in background.
-        """
-        dev_key = str(device_id).strip()
-        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        now = datetime.now(timezone.utc)
-        today = now.date()
-
-        cache_key = f"actlogs_{clean_id}_{today.strftime('%Y-%m-%d')}"
-        now_ts = time.time()
-        cached = _AWS_CACHE.get(cache_key)
-        if cached and cached.get("expires_at", 0) > now_ts:
-            all_grouped = cached["data"]
-            start_idx = (page - 1) * limit
-            return {
-                "success": True,
-                "logs": all_grouped[start_idx : start_idx + limit],
-                "page": page,
-                "limit": limit,
-                "totalLogs": len(all_grouped),
-                "source": "aws_api"
-            }
-
-        last_logs = _LAST_VALID_LOGS.get(clean_id) or _LAST_VALID_LOGS.get(dev_key)
-        if last_logs:
-            cls._trigger_background_logs_refresh(clean_id)
-            start_idx = (page - 1) * limit
-            return {
-                "success": True,
-                "logs": last_logs[start_idx : start_idx + limit],
-                "page": page,
-                "limit": limit,
-                "totalLogs": len(last_logs),
-                "source": "aws_api"
-            }
-
-        return cls._compute_activity_logs(clean_id, page=page, limit=limit)
-
-    @classmethod
-    def _compute_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
-        dev_key = str(device_id).strip()
-        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        now = datetime.now(timezone.utc)
-        today = now.date()
-        date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
-
-        cache_key = f"actlogs_{clean_id}_{today.strftime('%Y-%m-%d')}"
-
-        # Collect packets across the 7 days in parallel
-        all_packets = []
-        def _fetch_day_packets(d: date):
-            d_fmt = d.strftime("%d-%m-%Y")
-            return cls.get_processed_packets(clean_id, start_date=d_fmt, end_date=d_fmt)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(date_range))) as executor:
-            future_map = {executor.submit(_fetch_day_packets, d): d for d in date_range}
-            for fut in concurrent.futures.as_completed(future_map):
-                try:
-                    pkts = fut.result()
-                    if pkts:
-                        all_packets.extend(pkts)
-                except Exception as e:
-                    d = future_map[fut]
-                    logger.warning(f"Error fetching packets for activity logs day {d} for {clean_id}: {e}")
-
+        # 3. Build chronological transition logs from all_packets
         all_packets.sort(key=lambda p: p["timestamp"])
-
         grouped_logs = []
         current_group = None
         last_ts = None
@@ -1351,7 +1361,6 @@ class AwsTelemetryService:
             del g["packetCount"]
             del g["confidenceSum"]
 
-        # Merge with existing historical logs within the active 7-day window
         min_date_str = date_range[0].strftime("%Y-%m-%d")
         existing = _LAST_VALID_LOGS.get(clean_id, []) or _LAST_VALID_LOGS.get(dev_key, [])
         if isinstance(existing, dict):
@@ -1363,22 +1372,80 @@ class AwsTelemetryService:
                 if old_date and old_date >= min_date_str and old_date not in new_dates:
                     grouped_logs.append(old_log)
 
-        # Enforce that every log is within the active 7-day window
         grouped_logs = [l for l in grouped_logs if l.get("startTime", "")[:10] >= min_date_str]
         grouped_logs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
         if grouped_logs:
             _LAST_VALID_LOGS[clean_id] = grouped_logs
             _LAST_VALID_LOGS[dev_key] = grouped_logs
-            _save_snapshot()
-        _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": grouped_logs}
 
+        cache_key_logs = f"actlogs_{clean_id}_{today_str}"
+        _AWS_CACHE[cache_key_logs] = {"expires_at": time.time() + 60.0, "data": grouped_logs}
+
+        _save_snapshot()
+        return result_7d
+
+    @classmethod
+    def get_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
+        """
+        Builds chronological activity transition logs for an AWS device across the 7-day window.
+        STRICTLY NON-BLOCKING: Returns immediately from cache or snapshot (<2ms) and refreshes in background.
+        """
+        dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        now = datetime.now(timezone.utc)
+        today = now.date()
+
+        cache_key = f"actlogs_{clean_id}_{today.strftime('%Y-%m-%d')}"
+        now_ts = time.time()
+        cached = _AWS_CACHE.get(cache_key)
+        if cached and cached.get("expires_at", 0) > now_ts:
+            all_grouped = cached["data"]
+            start_idx = (page - 1) * limit
+            return {
+                "success": True,
+                "logs": all_grouped[start_idx : start_idx + limit],
+                "page": page,
+                "limit": limit,
+                "totalLogs": len(all_grouped),
+                "source": "aws_api"
+            }
+
+        last_logs = _LAST_VALID_LOGS.get(clean_id) or _LAST_VALID_LOGS.get(dev_key)
+        if last_logs:
+            cls._trigger_background_logs_refresh(clean_id)
+            start_idx = (page - 1) * limit
+            return {
+                "success": True,
+                "logs": last_logs[start_idx : start_idx + limit],
+                "page": page,
+                "limit": limit,
+                "totalLogs": len(last_logs),
+                "source": "aws_api"
+            }
+
+        # Strictly non-blocking baseline: Return empty immediately (<1ms) and refresh in background
+        cls._trigger_background_logs_refresh(clean_id)
+        return {
+            "success": True,
+            "logs": [],
+            "page": page,
+            "limit": limit,
+            "totalLogs": 0,
+            "source": "aws_api"
+        }
+
+    @classmethod
+    def _compute_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
+        cls._refresh_7day_and_logs(device_id)
+        clean_id = str(device_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        logs = _LAST_VALID_LOGS.get(clean_id, [])
         start_idx = (page - 1) * limit
         return {
             "success": True,
-            "logs": grouped_logs[start_idx : start_idx + limit],
+            "logs": logs[start_idx : start_idx + limit],
             "page": page,
             "limit": limit,
-            "totalLogs": len(grouped_logs),
+            "totalLogs": len(logs),
             "source": "aws_api"
         }
 

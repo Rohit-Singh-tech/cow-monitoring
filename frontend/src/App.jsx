@@ -179,23 +179,20 @@ export default function App() {
           fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=250`, {}, 60000)
         ]);
         const [data7, dataLogs] = await Promise.all([res7.json(), resLogs.json()]);
-        if (!isSubscribed) return;
         if (data7.success) setData7Day(data7);
-        if (dataLogs.success) setLogs(dataLogs.logs);
+        if (dataLogs.success) setLogs(dataLogs.logs || []);
 
-        // If backend returned empty data (cache miss, bg computing), auto-retry after 15s
+        // If backend returned preliminary baseline, smoothly refresh in background after 3.5s
         const isEmpty7Day = !data7.monitoredHours || data7.monitoredHours.every(h => h === 0);
         const isEmptyLogs = !dataLogs.logs || dataLogs.logs.length === 0;
         const isAwsDevice = String(currentCowId).startsWith('aws-');
-        if (isAwsDevice && isEmpty7Day && isEmptyLogs && isSubscribed) {
-          setIs7DayLoading(true); // Keep spinner — bg is computing
-          retryTimerId = setTimeout(() => { if (isSubscribed) fetch7Day(true); }, 15000);
-          return;
+        if (isAwsDevice && (isEmpty7Day || isEmptyLogs) && isSubscribed) {
+          retryTimerId = setTimeout(() => { if (isSubscribed) fetch7Day(true); }, 3500);
         }
       } catch (err) {
         console.error('Error loading 7day data:', err);
       } finally {
-        if (isSubscribed && !retryTimerId) setIs7DayLoading(false);
+        if (isSubscribed) setIs7DayLoading(false);
       }
     };
 
