@@ -4,7 +4,7 @@ import './index.css'
 import App from './App.jsx'
 import { ConfigProvider } from './context/ConfigContext'
 
-const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+import { API_BASE } from './config/api'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

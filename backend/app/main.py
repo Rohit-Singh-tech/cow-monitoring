@@ -99,20 +99,22 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning(f"DB prewarm error: {e}")
                 
-                # 2. Warm AWS items and start discovery daemon dynamically
+                # 2. Warm AWS items and start discovery & refresher daemons dynamically
                 try:
                     # Start auto-discovery daemon to continuously detect new collars in AWS
                     AwsTelemetryService.start_discovery_daemon()
+                    # Start background telemetry refresher daemon to keep active AWS nodes perpetually fresh
+                    AwsTelemetryService.start_telemetry_refresher_daemon()
                     from concurrent.futures import ThreadPoolExecutor
                     AwsTelemetryService.get_herd_overview_items()
-                    known_ids = AwsTelemetryService.get_known_device_ids()
+                    known_ids = [d for d in AwsTelemetryService.get_known_device_ids() if AwsTelemetryService.device_has_7day_data(d)]
                     if known_ids:
-                        with ThreadPoolExecutor(max_workers=6) as executor:
+                        with ThreadPoolExecutor(max_workers=min(5, len(known_ids))) as executor:
                             list(executor.map(AwsTelemetryService.get_live_dashboard, known_ids))
                         first_aws = known_ids[0]
                         AwsTelemetryService.get_7day_activity(first_aws)
                         AwsTelemetryService.get_activity_logs(first_aws)
-                        logger.info(f"Pre-warmed live dashboards for {len(known_ids)} AWS devices: {known_ids}")
+                        logger.info(f"Pre-warmed live dashboards for {len(known_ids)} active AWS devices: {known_ids}")
                 except Exception as e:
                     logger.warning(f"AWS prewarm error: {e}")
 
@@ -172,6 +174,7 @@ def root():
 
 # Health checks for Render deployment
 @app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
+@app.api_route("/api/health", methods=["GET", "HEAD"], tags=["Health"])
 @app.api_route(f"{settings.API_V1_STR}/health", methods=["GET", "HEAD"], tags=["Health"])
 def health_check():
     ml_mgr = get_ml_manager()
@@ -274,6 +277,11 @@ def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Se
     ).order_by(DataloggerHeader.timestamp.asc()).all()
     
     if not headers:
+        clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        if AwsTelemetryService.is_aws_device(clean_id):
+            aws_logs = AwsTelemetryService.get_activity_logs(clean_id, page=page, limit=limit)
+            if aws_logs.get("logs"):
+                return aws_logs
         empty_res = {"success": True, "logs": [], "page": page, "limit": limit}
         _DB_ACT_LOGS_CACHE[cache_key] = {"expires_at": time.time() + 30.0, "data": empty_res}
         return empty_res

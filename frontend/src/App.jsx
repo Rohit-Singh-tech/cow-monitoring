@@ -10,7 +10,7 @@ import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
 import './index.css';
 
-const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+import { API_BASE } from './config/api';
 
 // Network helper with explicit timeout to prevent requests from hanging indefinitely
 const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
@@ -26,9 +26,24 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
   }
 };
 
+const getInitialCachedCows = () => {
+  try {
+    const raw = localStorage.getItem('cached_cows');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  return [];
+};
+
 export default function App() {
-  const [cows, setCows] = useState([]);
-  const [currentCowId, setCurrentCowId] = useState('');
+  const [cows, setCows] = useState(getInitialCachedCows);
+  const [currentCowId, setCurrentCowId] = useState(() => {
+    const initial = getInitialCachedCows();
+    const active = initial.find(c => !c.isStale && ((c.monitoredHoursToday || 0) > 0 || (c.ruminationHoursToday || 0) > 0));
+    return active ? active.id : (initial[0]?.id || '');
+  });
   const [activeTab, setActiveTab] = useState('live');
   const [currentData, setCurrentData] = useState(null);
   const [data7Day, setData7Day] = useState(null);
@@ -95,8 +110,14 @@ export default function App() {
       const data = await res.json();
       if (data.success && data.cows && data.cows.length > 0) {
         setCows(data.cows);
+        try {
+          localStorage.setItem('cached_cows', JSON.stringify(data.cows));
+        } catch (_) {}
         setCurrentCowId(prev => {
-          if (!prev) return data.cows[0].id;
+          if (!prev) {
+            const activeCow = data.cows.find(c => !c.isStale && ((c.monitoredHoursToday || 0) > 0 || (c.ruminationHoursToday || 0) > 0));
+            return activeCow ? activeCow.id : data.cows[0].id;
+          }
           return prev;
         });
         cowsErrorCountRef.current = 0; // Reset on success
@@ -104,18 +125,6 @@ export default function App() {
     } catch (err) {
       console.error('Error fetching cows:', err);
       cowsErrorCountRef.current += 1;
-      // Resilient fallback: ensure user is never stuck on loading screen
-      setCows(prev => {
-        if (prev.length === 0) {
-          return [
-            { id: "aws-8", device_id: "8", source: "aws_api", tagNumber: "AWS 8", name: "AWS 8", healthStatus: "HEALTHY", health_risk_decision: "HEALTHY", currentActivity: "RES", activityName: "Standing Rest", ruminationHoursToday: 0, lyingHoursToday: 0, feedingHoursToday: 0, movingHoursToday: 0, estrusProbability: 0 },
-            { id: "17", device_id: "17", source: "gatewayless", tagNumber: "TAG-17", name: "Cow", healthStatus: "HEALTHY", health_risk_decision: "HEALTHY", currentActivity: "RES", activityName: "Standing Rest", ruminationHoursToday: 0, lyingHoursToday: 0, feedingHoursToday: 0, movingHoursToday: 0, estrusProbability: 0 },
-            { id: "aws-7", device_id: "7", source: "aws_api", tagNumber: "AWS 7", name: "AWS 7", healthStatus: "HEALTHY", health_risk_decision: "HEALTHY", currentActivity: "RES", activityName: "Standing Rest", ruminationHoursToday: 0, lyingHoursToday: 0, feedingHoursToday: 0, movingHoursToday: 0, estrusProbability: 0 }
-          ];
-        }
-        return prev;
-      });
-      setCurrentCowId(prev => prev || "aws-8");
     } finally {
       cowsFetchingRef.current = false;
     }
@@ -272,8 +281,10 @@ export default function App() {
         breed: existingCow.breed,
         location: existingCow.location,
         weight: existingCow.weight,
+        isStale: existingCow.isStale,
         currentActivity: { code: existingCow.currentActivity, name: existingCow.activityName || 'Standing Rest' },
         healthStatus: {
+          monitoredHoursToday: existingCow.monitoredHoursToday || 0,
           ruminationHoursToday: existingCow.ruminationHoursToday || 0,
           lyingHoursToday: existingCow.lyingHoursToday || 0,
           feedingHoursToday: existingCow.feedingHoursToday || 0,

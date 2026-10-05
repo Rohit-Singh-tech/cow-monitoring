@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useConfig } from '../context/ConfigContext';
 import { formatHours } from '../utils';
 
-const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+import { API_BASE } from '../config/api';
 
 export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
   const { activities } = useConfig();
@@ -100,7 +100,22 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
     );
   }
 
+  const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
   const filteredCows = cows.filter(cow => {
+    // Exclude any device whose data has not arrived in the last 7 days from current date
+    const hasTodayData = (cow.monitoredHoursToday || 0) > 0 || (cow.ruminationHoursToday || 0) > 0;
+    let has7DayData = hasTodayData;
+    if (!has7DayData && cow.lastSeen) {
+      const seenTime = new Date(cow.lastSeen).getTime();
+      if (!isNaN(seenTime) && seenTime >= sevenDaysAgoMs) {
+        has7DayData = true;
+      }
+    }
+    if (!has7DayData && cow.isStale && (!cow.monitoredHoursToday || cow.monitoredHoursToday === 0)) {
+      return false;
+    }
+
     const matchesSearch = 
       cow.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cow.tagNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -112,10 +127,13 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
 
     const isAws = cow.source === 'aws_api' || String(cow.id).startsWith('aws-');
     const cowSource = isAws ? 'aws_api' : 'gatewayless';
-    const matchesSource = sourceFilter === 'ALL' || cowSource === sourceFilter;
+    const isLive = !cow.isStale && (cow.monitoredHoursToday > 0 || cow.ruminationHoursToday > 0);
+    const matchesSource = sourceFilter === 'ALL' || (sourceFilter === 'LIVE' ? isLive : cowSource === sourceFilter);
 
     return matchesSearch && matchesHealth && matchesSource;
   });
+
+  const liveStreamingCount = (cows || []).filter(c => !c.isStale && (c.monitoredHoursToday > 0 || c.ruminationHoursToday > 0)).length;
 
   return (
     <div>
@@ -127,7 +145,7 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
             NODE DIRECTORY & CATTLE HERD REGISTRY
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.825rem', marginTop: '0.15rem' }}>
-            Real-time status across Gatewayless nodes and Aws cloud devices.
+            Real-time status across Gatewayless nodes and AWS Cloud IoT devices.
           </p>
         </div>
 
@@ -147,8 +165,9 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
             onChange={(e) => setSourceFilter(e.target.value)}
           >
             <option value="ALL">All Sources</option>
+            <option value="LIVE">🟢 Live Streaming ({liveStreamingCount})</option>
+            <option value="aws_api">☁️ AWS Cloud</option>
             <option value="gatewayless">🗄️ Gatewayless</option>
-            <option value="aws_api">☁️ Aws</option>
           </select>
 
           <select
@@ -163,9 +182,9 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
             <option value="ESTRUS_ALERT">🔥 Estrus Alert</option>
           </select>
 
-          <div className="status-pill online">
-            <i className="fa-solid fa-microchip"></i>
-            {cows.length} ACTIVE NODES
+          <div className="status-pill online" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+            <span className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-emerald)', display: 'inline-block' }}></span>
+            {liveStreamingCount} LIVE STREAMING • {cows.length} NODES
           </div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import './Login.css';
 
-const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+import { API_BASE } from '../config/api';
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');

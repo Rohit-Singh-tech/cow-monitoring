@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { API_BASE } from '../config/api';
 
 const ConfigContext = createContext();
 
@@ -29,7 +30,8 @@ export function ConfigProvider({ children, apiBase }) {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const response = await fetch(`${apiBase}/api/config/activities`);
+        const targetBase = apiBase !== undefined ? apiBase : API_BASE;
+        const response = await fetch(`${targetBase}/api/config/activities`);
         const data = await response.json();
         if (data.success && data.activities && Object.keys(data.activities).length > 0) {
           setActivities(data.activities);

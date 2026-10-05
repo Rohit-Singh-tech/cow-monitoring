@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const API_BASE = import.meta.env.MODE === 'production' ? 'https://cow-monitoring01.onrender.com' : '';
+import { API_BASE } from '../config/api';
 
 export default function HardwareSpecs({ currentCowId, currentData, onReloadData }) {
   const [terminalLogs, setTerminalLogs] = useState([

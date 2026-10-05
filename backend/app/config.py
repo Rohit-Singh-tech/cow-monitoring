@@ -1,6 +1,7 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+from pydantic import field_validator
+from typing import List, Union, Any
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Cow Logger Gateway-Less Livestock Monitoring API"
@@ -34,14 +35,22 @@ class Settings(BaseSettings):
         "https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function?type=cow01"
     )
     AWS_COWNECK_API_TYPE: str = os.getenv("AWS_COWNECK_API_TYPE", "cow01")
-    AWS_ENABLED_DEVICE_IDS: List[str] = [
-        x.strip() for x in os.getenv(
-            "AWS_ENABLED_DEVICE_IDS",
-            "1,3,4,5,6,7,8,9,11,12,13,14,15,19,20,21,23,32,36,37,38,40,41,43,44,46,48,49,50,59"
-        ).split(",") if x.strip()
-    ]
+    AWS_ENABLED_DEVICE_IDS: Union[List[str], str] = ["11", "12", "13", "14", "15"]
     AWS_DISCOVERY_SCAN_MAX: int = int(os.getenv("AWS_DISCOVERY_SCAN_MAX", "100"))
     AWS_AUTO_DISCOVERY_INTERVAL_MINUTES: int = int(os.getenv("AWS_AUTO_DISCOVERY_INTERVAL_MINUTES", "10"))
+
+    @field_validator("AWS_ENABLED_DEVICE_IDS", mode="before")
+    @classmethod
+    def parse_device_ids(cls, v):
+        if isinstance(v, str):
+            if v.startswith("["):
+                try:
+                    import json
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), "..", ".env"), 

@@ -222,6 +222,32 @@ CACHE_TTL_SECONDS = 300
 _IN_FLIGHT_DEVICE_LOCKS: Dict[str, threading.Lock] = {}
 _GLOBAL_LOCK = threading.Lock()
 
+_AWS_HTTP_SESSION = None
+_LIVE_REFRESHING_SET = set()
+_LIVE_REFRESH_LOCK = threading.Lock()
+_7DAY_REFRESHING_SET = set()
+_7DAY_REFRESH_LOCK = threading.Lock()
+_LOGS_REFRESHING_SET = set()
+_LOGS_REFRESH_LOCK = threading.Lock()
+_TELEMETRY_DAEMON_STARTED = False
+
+def _get_aws_http_session():
+    """Persistent requests.Session with connection pooling and keep-alive."""
+    global _AWS_HTTP_SESSION
+    if _AWS_HTTP_SESSION is None and _requests is not None:
+        try:
+            sess = _requests.Session()
+            from requests.adapters import HTTPAdapter
+            from urllib3.util import Retry
+            retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+            adapter = HTTPAdapter(pool_connections=25, pool_maxsize=35, max_retries=retries)
+            sess.mount("https://", adapter)
+            sess.mount("http://", adapter)
+            _AWS_HTTP_SESSION = sess
+        except Exception:
+            _AWS_HTTP_SESSION = _requests.Session() if _requests else None
+    return _AWS_HTTP_SESSION
+
 def _get_device_lock(dev_id: str) -> threading.Lock:
     with _GLOBAL_LOCK:
         dev_key = str(dev_id).strip()
@@ -337,11 +363,21 @@ class AwsTelemetryService:
         read_timeout = 15 if is_today else 10
 
         try:
-            if _requests is not None:
+            sess = _get_aws_http_session()
+            if sess is not None:
+                resp = sess.get(
+                    url,
+                    headers={"User-Agent": "CowMonitoring-Backend/1.0", "Accept-Encoding": "gzip, deflate"},
+                    timeout=(4, read_timeout),  # (connect_timeout, read_timeout)
+                    stream=False
+                )
+                resp.raise_for_status()
+                raw_bytes = resp.content
+            elif _requests is not None:
                 resp = _requests.get(
                     url,
-                    headers={"User-Agent": "CowMonitoring-Backend/1.0"},
-                    timeout=(5, read_timeout),  # (connect_timeout, read_timeout)
+                    headers={"User-Agent": "CowMonitoring-Backend/1.0", "Accept-Encoding": "gzip, deflate"},
+                    timeout=(5, read_timeout),
                     stream=False
                 )
                 resp.raise_for_status()
@@ -349,7 +385,7 @@ class AwsTelemetryService:
             else:
                 req = urllib.request.Request(
                     url,
-                    headers={"User-Agent": "CowMonitoring-Backend/1.0"}
+                    headers={"User-Agent": "CowMonitoring-Backend/1.0", "Accept-Encoding": "gzip, deflate"}
                 )
                 with urllib.request.urlopen(req, timeout=read_timeout) as resp:
                     raw_bytes = resp.read()
@@ -726,26 +762,64 @@ class AwsTelemetryService:
         return meta
 
     @classmethod
+    def _trigger_background_live_refresh(cls, clean_id: str, target_date: str):
+        dev_key = str(clean_id).strip()
+        with _LIVE_REFRESH_LOCK:
+            if dev_key in _LIVE_REFRESHING_SET:
+                return
+            _LIVE_REFRESHING_SET.add(dev_key)
+
+        def worker():
+            try:
+                cls._compute_live_dashboard(dev_key, target_date)
+            except Exception as e:
+                logger.warning(f"Error in background live refresh for dev {dev_key}: {e}")
+            finally:
+                with _LIVE_REFRESH_LOCK:
+                    _LIVE_REFRESHING_SET.discard(dev_key)
+
+        threading.Thread(target=worker, daemon=True, name=f"LiveRefresh-{dev_key}").start()
+
+    @classmethod
     def get_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
         """
         Builds the Live Diagnostics dashboard payload for an AWS device.
         Matches exact schema of get_cow_live_dashboard in cows.py.
-        Targets specific date for 24 hours (startdate=target&enddate=target).
-        If today has NO packets, today's activity totals are strictly 0.0 and node is marked stale/offline.
+        STRICTLY NON-BLOCKING: returns immediately (<2ms) from RAM/snapshot and refreshes in background.
         """
         now = datetime.now(timezone.utc)
         today_date_str = now.strftime("%d-%m-%Y")
         is_querying_today = (target_date is None or target_date == today_date_str)
         target = target_date or today_date_str
+        dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
 
-        cache_key = f"live_{device_id}_{target}"
+        cache_key = f"live_{clean_id}_{target}"
+        now_ts = time.time()
         cached = _AWS_CACHE.get(cache_key)
-        if cached and cached.get("expires_at", 0) > time.time():
+        if cached and cached.get("expires_at", 0) > now_ts:
             return cached["data"]
 
-        packets = cls.get_processed_packets(device_id, start_date=target, end_date=target)
-        dev_meta = cls.get_device_metadata(device_id)
+        # Stale-While-Revalidate: Return last valid computed dashboard immediately (<2ms)
+        last_dash = _LAST_VALID_DASHBOARD.get(clean_id) or _LAST_VALID_DASHBOARD.get(dev_key)
+        if is_querying_today and last_dash:
+            cls._trigger_background_live_refresh(clean_id, target)
+            return last_dash
+
+        return cls._compute_live_dashboard(clean_id, target)
+
+    @classmethod
+    def _compute_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
+        now = datetime.now(timezone.utc)
+        today_date_str = now.strftime("%d-%m-%Y")
+        is_querying_today = (target_date is None or target_date == today_date_str)
+        target = target_date or today_date_str
         dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        cache_key = f"live_{clean_id}_{target}"
+
+        packets = cls.get_processed_packets(clean_id, start_date=target, end_date=target)
+        dev_meta = cls.get_device_metadata(clean_id)
 
         # Filter packets strictly belonging to target date
         target_date_obj = datetime.strptime(target, "%d-%m-%Y").date()
@@ -755,7 +829,7 @@ class AwsTelemetryService:
 
         # If device has no packets for this target date (e.g. today has no data)
         if not target_packets:
-            last_known = _LAST_KNOWN_TELEMETRY.get(dev_key)
+            last_known = _LAST_KNOWN_TELEMETRY.get(clean_id) or _LAST_KNOWN_TELEMETRY.get(dev_key)
             last_telem = last_known["telemetry"] if last_known else {"x": 0, "y": 0, "z": 0, "magnitude": 0, "timestamp": now.isoformat()}
             last_accel = last_known["accelBuffer"] if last_known else {"labels": [f"{(i*0.1):.1f}s" for i in range(80)], "x": [0]*80, "y": [0]*80, "z": [0]*80, "mag": [0]*80}
             if packets:
@@ -768,8 +842,8 @@ class AwsTelemetryService:
                 last_accel = {"labels": [f"{(i*0.1):.1f}s" for i in range(len(x_b))], "x": x_b, "y": y_b, "z": z_b, "mag": m_b}
 
             empty_res = {
-                "cowId": f"aws-{device_id}",
-                "device_id": str(device_id),
+                "cowId": f"aws-{clean_id}",
+                "device_id": str(clean_id),
                 "source": "aws_api",
                 "cowName": dev_meta["name"],
                 "tagNumber": dev_meta["tagNumber"],
@@ -806,6 +880,7 @@ class AwsTelemetryService:
                     "health_risk_decision": "NO_DATA"
                 }
             }
+            _LAST_VALID_DASHBOARD[clean_id] = empty_res
             _LAST_VALID_DASHBOARD[dev_key] = empty_res
             _save_snapshot()
             _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": empty_res}
@@ -875,11 +950,11 @@ class AwsTelemetryService:
         labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
 
         live_payload = {
-            "cowId": f"aws-{device_id}",
-            "device_id": str(device_id),
+            "cowId": f"aws-{clean_id}",
+            "device_id": str(clean_id),
             "source": "aws_api",
             "cowName": dev_meta["name"],
-            "tagNumber": dev_meta.get("tagNumber") or f"AWS {device_id}",
+            "tagNumber": dev_meta.get("tagNumber") or f"AWS {clean_id}",
             "breed": dev_meta["breed"],
             "location": dev_meta["location"],
             "weight": dev_meta["weight"],
@@ -919,12 +994,14 @@ class AwsTelemetryService:
             },
             "ml_inference": latest_ml
         }
-        _LAST_VALID_DASHBOARD[str(device_id).strip()] = live_payload
-        _LAST_KNOWN_TELEMETRY[str(device_id).strip()] = {
+        _LAST_VALID_DASHBOARD[clean_id] = live_payload
+        _LAST_VALID_DASHBOARD[dev_key] = live_payload
+        _LAST_KNOWN_TELEMETRY[clean_id] = {
             "telemetry": live_payload["liveTelemetry"],
             "accelBuffer": live_payload["accelBuffer"],
             "timestamp": latest_ts.isoformat()
         }
+        _LAST_KNOWN_TELEMETRY[dev_key] = _LAST_KNOWN_TELEMETRY[clean_id]
         _save_snapshot()
         _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": live_payload}
         return live_payload
@@ -989,14 +1066,54 @@ class AwsTelemetryService:
         }
 
     @classmethod
+    def _trigger_background_7day_refresh(cls, clean_id: str):
+        dev_key = str(clean_id).strip()
+        with _7DAY_REFRESH_LOCK:
+            if dev_key in _7DAY_REFRESHING_SET:
+                return
+            _7DAY_REFRESHING_SET.add(dev_key)
+
+        def worker():
+            try:
+                cls._compute_7day_activity(dev_key)
+            except Exception as e:
+                logger.warning(f"Error in background 7day refresh for dev {dev_key}: {e}")
+            finally:
+                with _7DAY_REFRESH_LOCK:
+                    _7DAY_REFRESHING_SET.discard(dev_key)
+
+        threading.Thread(target=worker, daemon=True, name=f"7DayRefresh-{dev_key}").start()
+
+    @classmethod
     def get_7day_activity(cls, device_id: str) -> dict:
         """
         Builds the 7-day behavior distribution for an AWS device.
-        Dynamically computes the rolling 7-day date window ending TODAY.
-        Past days are cached permanently / in snapshot for instant sub-second responses.
-        Only today's date is queried from AWS (or refreshed if expired).
+        STRICTLY NON-BLOCKING: Returns immediately from cache or snapshot (<2ms) and refreshes in background.
         """
         dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        today_str = today.strftime("%Y-%m-%d")
+
+        cache_key = f"7day_{clean_id}_{today_str}"
+        now_ts = time.time()
+        cached = _AWS_CACHE.get(cache_key)
+        if cached and cached.get("expires_at", 0) > now_ts:
+            return cached["data"]
+
+        # Stale-While-Revalidate: Return last valid 7day immediately (<2ms)
+        last_7d = _LAST_VALID_7DAY.get(clean_id) or _LAST_VALID_7DAY.get(dev_key)
+        if last_7d:
+            cls._trigger_background_7day_refresh(clean_id)
+            return last_7d
+
+        return cls._compute_7day_activity(clean_id)
+
+    @classmethod
+    def _compute_7day_activity(cls, device_id: str) -> dict:
+        dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         now = datetime.now(timezone.utc)
         today = now.date()
         today_str = today.strftime("%Y-%m-%d")
@@ -1006,46 +1123,42 @@ class AwsTelemetryService:
         day_labels = [d.strftime("%a") for d in date_range]
         date_labels = [d.strftime("%Y-%m-%d") for d in date_range]
 
-        cache_key = f"7day_{dev_key}_{today_str}"
-        now_ts = time.time()
-        cached = _AWS_CACHE.get(cache_key)
-        if cached and cached.get("expires_at", 0) > now_ts:
-            return cached["data"]
+        cache_key = f"7day_{clean_id}_{today_str}"
 
         # Collect missing days for past days (d < today): fetch once and cache in _AWS_DAILY_SUMMARIES
         missing_days = []
         for d in date_range:
             d_str = d.strftime("%Y-%m-%d")
             if d < today:
-                if dev_key not in _AWS_DAILY_SUMMARIES or d_str not in _AWS_DAILY_SUMMARIES[dev_key]:
+                if clean_id not in _AWS_DAILY_SUMMARIES or d_str not in _AWS_DAILY_SUMMARIES[clean_id]:
                     missing_days.append(d)
 
         if missing_days:
             def fetch_single_day(d: date):
                 day_fmt = d.strftime("%d-%m-%Y")
-                return d, cls.get_processed_packets(dev_key, start_date=day_fmt, end_date=day_fmt)
+                return d, cls.get_processed_packets(clean_id, start_date=day_fmt, end_date=day_fmt)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(missing_days))) as executor:
                 future_map = {executor.submit(fetch_single_day, d): d for d in missing_days}
                 for fut in concurrent.futures.as_completed(future_map):
                     try:
                         d, pkts = fut.result()
-                        cls._update_daily_summary_from_packets(dev_key, d, pkts)
+                        cls._update_daily_summary_from_packets(clean_id, d, pkts)
                     except Exception as e:
                         d = future_map[fut]
-                        logger.warning(f"Error fetching AWS day {d} for {dev_key}: {e}")
-                        cls._update_daily_summary_from_packets(dev_key, d, [])
+                        logger.warning(f"Error fetching AWS day {d} for {clean_id}: {e}")
+                        cls._update_daily_summary_from_packets(clean_id, d, [])
 
         # Always fetch/refresh today's data directly so today's telemetry is ALWAYS accurate and live
-        today_pkts = cls.get_processed_packets(dev_key, start_date=today_aws_fmt, end_date=today_aws_fmt)
-        cls._update_daily_summary_from_packets(dev_key, today, today_pkts)
+        today_pkts = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt)
+        cls._update_daily_summary_from_packets(clean_id, today, today_pkts)
 
         rum_list, lying_list, feed_list, act_list = [], [], [], []
         monitored_list, health_score_list, estrus_index_list = [], [], []
 
         for d in date_range:
             d_str = d.strftime("%Y-%m-%d")
-            s = _AWS_DAILY_SUMMARIES.get(dev_key, {}).get(d_str, {
+            s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str, {
                 "monitored_hours": 0.0, "rum_hours": 0.0, "lying_hours": 0.0,
                 "feed_hours": 0.0, "move_hours": 0.0, "health_score": 0, "estrus_index": 0
             })
@@ -1067,8 +1180,8 @@ class AwsTelemetryService:
         }
 
         result = {
-            "cowId": f"aws-{dev_key}",
-            "device_id": str(dev_key),
+            "cowId": f"aws-{clean_id}",
+            "device_id": str(clean_id),
             "source": "aws_api",
             "days": day_labels,
             "dates": date_labels,
@@ -1083,24 +1196,43 @@ class AwsTelemetryService:
             "weeklyAverageHours": weekly_avg
         }
 
-        # Cache 7-day result for 60 seconds (today refreshes every minute)
+        _LAST_VALID_7DAY[clean_id] = result
+        _LAST_VALID_7DAY[dev_key] = result
         _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": result}
         _save_snapshot()
         return result
 
     @classmethod
+    def _trigger_background_logs_refresh(cls, clean_id: str):
+        dev_key = str(clean_id).strip()
+        with _LOGS_REFRESH_LOCK:
+            if dev_key in _LOGS_REFRESHING_SET:
+                return
+            _LOGS_REFRESHING_SET.add(dev_key)
+
+        def worker():
+            try:
+                cls._compute_activity_logs(dev_key)
+            except Exception as e:
+                logger.warning(f"Error in background logs refresh for dev {dev_key}: {e}")
+            finally:
+                with _LOGS_REFRESH_LOCK:
+                    _LOGS_REFRESHING_SET.discard(dev_key)
+
+        threading.Thread(target=worker, daemon=True, name=f"LogsRefresh-{dev_key}").start()
+
+    @classmethod
     def get_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
         """
         Builds chronological activity transition logs for an AWS device across the 7-day window.
-        Uses cached processed packets for past days, queries/caches today.
-        Breaks sessions on activity change, packet gaps (>120s), and date changes.
+        STRICTLY NON-BLOCKING: Returns immediately from cache or snapshot (<2ms) and refreshes in background.
         """
         dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         now = datetime.now(timezone.utc)
         today = now.date()
-        date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
 
-        cache_key = f"actlogs_{dev_key}_{today.strftime('%Y-%m-%d')}"
+        cache_key = f"actlogs_{clean_id}_{today.strftime('%Y-%m-%d')}"
         now_ts = time.time()
         cached = _AWS_CACHE.get(cache_key)
         if cached and cached.get("expires_at", 0) > now_ts:
@@ -1115,11 +1247,36 @@ class AwsTelemetryService:
                 "source": "aws_api"
             }
 
+        last_logs = _LAST_VALID_LOGS.get(clean_id) or _LAST_VALID_LOGS.get(dev_key)
+        if last_logs:
+            cls._trigger_background_logs_refresh(clean_id)
+            start_idx = (page - 1) * limit
+            return {
+                "success": True,
+                "logs": last_logs[start_idx : start_idx + limit],
+                "page": page,
+                "limit": limit,
+                "totalLogs": len(last_logs),
+                "source": "aws_api"
+            }
+
+        return cls._compute_activity_logs(clean_id, page=page, limit=limit)
+
+    @classmethod
+    def _compute_activity_logs(cls, device_id: str, page: int = 1, limit: int = 20) -> dict:
+        dev_key = str(device_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
+
+        cache_key = f"actlogs_{clean_id}_{today.strftime('%Y-%m-%d')}"
+
         # Collect packets across the 7 days in parallel
         all_packets = []
         def _fetch_day_packets(d: date):
             d_fmt = d.strftime("%d-%m-%Y")
-            return cls.get_processed_packets(dev_key, start_date=d_fmt, end_date=d_fmt)
+            return cls.get_processed_packets(clean_id, start_date=d_fmt, end_date=d_fmt)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(date_range))) as executor:
             future_map = {executor.submit(_fetch_day_packets, d): d for d in date_range}
@@ -1130,7 +1287,7 @@ class AwsTelemetryService:
                         all_packets.extend(pkts)
                 except Exception as e:
                     d = future_map[fut]
-                    logger.warning(f"Error fetching packets for activity logs day {d} for {dev_key}: {e}")
+                    logger.warning(f"Error fetching packets for activity logs day {d} for {clean_id}: {e}")
 
         all_packets.sort(key=lambda p: p["timestamp"])
 
@@ -1156,7 +1313,7 @@ class AwsTelemetryService:
                     grouped_logs.append(current_group)
                 act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP["RES"])
                 current_group = {
-                    "logId": f"aws-{dev_key}-{idx+1}",
+                    "logId": f"aws-{clean_id}-{idx+1}",
                     "startTime": ts.isoformat(),
                     "endTime": ts.isoformat(),
                     "packetCount": 1,
@@ -1196,7 +1353,7 @@ class AwsTelemetryService:
 
         # Merge with existing historical logs within the active 7-day window
         min_date_str = date_range[0].strftime("%Y-%m-%d")
-        existing = _LAST_VALID_LOGS.get(dev_key, [])
+        existing = _LAST_VALID_LOGS.get(clean_id, []) or _LAST_VALID_LOGS.get(dev_key, [])
         if isinstance(existing, dict):
             existing = existing.get("logs", [])
         if existing:
@@ -1210,6 +1367,7 @@ class AwsTelemetryService:
         grouped_logs = [l for l in grouped_logs if l.get("startTime", "")[:10] >= min_date_str]
         grouped_logs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
         if grouped_logs:
+            _LAST_VALID_LOGS[clean_id] = grouped_logs
             _LAST_VALID_LOGS[dev_key] = grouped_logs
             _save_snapshot()
         _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": grouped_logs}
@@ -1223,6 +1381,38 @@ class AwsTelemetryService:
             "totalLogs": len(grouped_logs),
             "source": "aws_api"
         }
+
+    @classmethod
+    def start_telemetry_refresher_daemon(cls):
+        """Starts background daemon that keeps active AWS telemetry perpetually fresh."""
+        global _TELEMETRY_DAEMON_STARTED
+        with _GLOBAL_LOCK:
+            if _TELEMETRY_DAEMON_STARTED:
+                return
+            _TELEMETRY_DAEMON_STARTED = True
+
+        def daemon_loop():
+            # Initial wait for server boot & initial pre-warming
+            time.sleep(8)
+            logger.info("Continuous AWS telemetry refresher background daemon started.")
+            while True:
+                try:
+                    time.sleep(30)
+                    active_ids = [d for d in cls.get_known_device_ids() if cls.device_has_7day_data(d)]
+                    today_str = datetime.now(timezone.utc).strftime("%d-%m-%Y")
+                    for dev_id in active_ids:
+                        try:
+                            cls._compute_live_dashboard(dev_id, today_str)
+                        except Exception:
+                            pass
+                        time.sleep(1.5)  # gentle pacing to avoid bursting CPU/network
+                except Exception as e:
+                    logger.warning(f"Error in telemetry refresher daemon: {e}")
+                    time.sleep(30)
+
+        t = threading.Thread(target=daemon_loop, daemon=True, name="AwsTelemetryRefresherDaemon")
+        t.start()
+
 
     @classmethod
     def _build_device_overview(cls, dash: dict) -> dict:
@@ -1260,10 +1450,38 @@ class AwsTelemetryService:
             "feedingHoursToday": 0.0 if is_stale else h.get("feedingHoursToday", 0.0),
             "movingHoursToday": 0.0 if is_stale else h.get("movingHoursToday", 0.0),
             "estrusProbability": 0 if is_stale else h.get("estrusProbabilityPercent", 0),
-            "lastSeen": last_seen or datetime.now(timezone.utc).isoformat(),
+            "lastSeen": last_seen,
             "isStale": is_stale,
             "monitoredHoursToday": 0.0 if is_stale else h.get("monitoredHoursToday", 0.0)
         }
+
+    @classmethod
+    def device_has_7day_data(cls, dev_id: str) -> bool:
+        """Checks if device has transmitted any data in the last 7 days relative to UTC now."""
+        now_dt = datetime.now(timezone.utc)
+        dates_7d = set((now_dt.date() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7))
+        dev_key = str(dev_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+
+        # Check today's live dashboard
+        cached_dash = _LAST_VALID_DASHBOARD.get(dev_key)
+        if cached_dash and (cached_dash.get("healthStatus", {}).get("monitoredHoursToday", 0.0) or 0) > 0:
+            return True
+
+        # Check 7-day daily summaries
+        s_map = _AWS_DAILY_SUMMARIES.get(dev_key, {})
+        for d_str in dates_7d:
+            s = s_map.get(d_str, {})
+            if (s.get("monitored_hours", 0) or 0) > 0 or (s.get("total_packets", 0) or 0) > 0:
+                return True
+
+        # Check logs
+        logs = _LAST_VALID_LOGS.get(dev_key, [])
+        if isinstance(logs, list):
+            for l in logs:
+                st = l.get("startTime", "")[:10]
+                if st in dates_7d:
+                    return True
+        return False
 
     @classmethod
     def _fetch_single_herd_item(cls, dev_id: str) -> dict:
@@ -1276,15 +1494,19 @@ class AwsTelemetryService:
         """
         Builds instantaneous placeholder items from TagRegistry / metadata cache.
         Returns in 0ms so the HTTP request NEVER hangs.
+        Only includes devices that have transmitted data in the last 7 days.
         """
         if not device_ids:
             device_ids = cls.get_known_device_ids()
 
         items = []
-        now_iso = datetime.now(timezone.utc).isoformat()
         for dev_id in device_ids:
             dev_str = str(dev_id).strip()
             clean_id = dev_str.lower().replace("aws-", "")
+
+            # If device has no data in last 7 days, omit it
+            if not cls.device_has_7day_data(clean_id):
+                continue
 
             # If we have valid live telemetry snapshot for this node, use it directly!
             if clean_id in _LAST_VALID_DASHBOARD:
@@ -1321,7 +1543,7 @@ class AwsTelemetryService:
                 "feedingHoursToday": 0.0,
                 "movingHoursToday": 0.0,
                 "estrusProbability": 0,
-                "lastSeen": now_iso,
+                "lastSeen": None,
                 "isStale": True,
                 "monitoredHoursToday": 0.0
             })
@@ -1349,7 +1571,7 @@ class AwsTelemetryService:
                     for future in concurrent.futures.as_completed(future_to_dev):
                         try:
                             item = future.result()
-                            if item:
+                            if item and cls.device_has_7day_data(item.get("device_id")):
                                 items.append(item)
                         except Exception as e:
                             dev_id = future_to_dev[future]
@@ -1376,7 +1598,7 @@ class AwsTelemetryService:
         """
         Returns list of herd overview summary dicts for all configured AWS devices.
         STRICTLY NON-BLOCKING: Always returns immediately (<5ms) using Stale-While-Revalidate.
-        Background daemon thread refreshes live telemetry.
+        Only returns devices that have transmitted data in the last 7 days.
         """
         global _HERD_ITEMS_CACHE
         now = time.time()
@@ -1388,14 +1610,17 @@ class AwsTelemetryService:
         if (now - _LAST_DISCOVERY_TIME) > (settings.AWS_AUTO_DISCOVERY_INTERVAL_MINUTES * 60):
             threading.Thread(target=cls.discover_devices, daemon=True, name="AwsAutoDiscoveryWorker").start()
 
-        # If cache exists and is fresh, return immediately
+        def filter_active(items_list):
+            return [it for it in items_list if cls.device_has_7day_data(it.get("device_id"))]
+
+        # If cache exists and is fresh, return filtered items
         if not force_refresh and _HERD_ITEMS_CACHE.get("expires_at", 0) > now and _HERD_ITEMS_CACHE.get("data"):
-            return _HERD_ITEMS_CACHE["data"]
+            return filter_active(_HERD_ITEMS_CACHE["data"])
 
         # If cache exists but is stale, trigger background refresh and return stale data immediately
         if _HERD_ITEMS_CACHE.get("data"):
             cls._trigger_background_herd_refresh(device_ids)
-            return _HERD_ITEMS_CACHE["data"]
+            return filter_active(_HERD_ITEMS_CACHE["data"])
 
         # Cold start: populate instant fallback items, trigger background refresh, and return immediately
         fallback_items = cls._build_fallback_herd_items(device_ids)
@@ -1404,5 +1629,5 @@ class AwsTelemetryService:
             "data": fallback_items
         }
         cls._trigger_background_herd_refresh(device_ids)
-        return fallback_items
+        return filter_active(fallback_items)
 

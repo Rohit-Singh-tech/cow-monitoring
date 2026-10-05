@@ -3,3 +3,4 @@ __pycache__/
 .env
 .aws_telemetry_snapshot.json*
 *.tmp
+*.db

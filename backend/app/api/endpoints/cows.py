@@ -340,7 +340,44 @@ def get_herd_overview(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error querying AWS herd overview items: {e}")
 
-    return result
+    # 3. Filter out any device whose data has NOT arrived in the last 7 days from current date
+    now_utc = datetime.now(timezone.utc)
+    seven_days_ago = now_utc - timedelta(days=7)
+    
+    active_7day_cows = []
+    for cow in result:
+        mon_hours = cow.get("monitoredHoursToday", 0.0) or 0.0
+        rum_hours = cow.get("ruminationHoursToday", 0.0) or 0.0
+        last_seen = cow.get("lastSeen")
+        
+        has_7day_data = False
+        if mon_hours > 0 or rum_hours > 0:
+            has_7day_data = True
+        elif last_seen:
+            try:
+                dt_seen = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+                if dt_seen.tzinfo is None:
+                    dt_seen = dt_seen.replace(tzinfo=timezone.utc)
+                if dt_seen >= seven_days_ago:
+                    has_7day_data = True
+            except Exception:
+                pass
+                
+        # For AWS devices, also consult AwsTelemetryService.device_has_7day_data
+        if not has_7day_data and (cow.get("source") == "aws_api" or str(cow.get("id")).startswith("aws-")):
+            has_7day_data = AwsTelemetryService.device_has_7day_data(cow.get("device_id"))
+
+        if has_7day_data:
+            active_7day_cows.append(cow)
+
+    # Prioritize active / live transmitting nodes at the top of the herd
+    active_7day_cows.sort(key=lambda c: (
+        0 if (not c.get("isStale", True) and (c.get("monitoredHoursToday", 0.0) or 0) > 0) else 1,
+        0 if (c.get("source") == "aws_api") else 1,
+        -(c.get("monitoredHoursToday", 0.0) or 0)
+    ))
+
+    return active_7day_cows
 
 
 def resolve_db_cow(cow_id: str, db: Session):
@@ -433,6 +470,13 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     
     ts = header.timestamp if header else None
     stale = _is_device_stale(ts)
+
+    # If DB device has no data or is stale, check if this device is an active AWS collar with live data
+    clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+    if (not header or stale) and AwsTelemetryService.is_aws_device(clean_id):
+        aws_dash = AwsTelemetryService.get_live_dashboard(clean_id, target_date=target_date)
+        if not aws_dash.get("isStale"):
+            return aws_dash
     
     # Get accelerometer points for the latest header
     x_buf, y_buf, z_buf = [], [], []
@@ -696,6 +740,12 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
             else:
                 d = day_str
             sql_fallback_by_date[d] = r[1]
+
+    clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+    if not summaries and not sql_fallback_by_date and AwsTelemetryService.is_aws_device(clean_id):
+        aws_7d = AwsTelemetryService.get_7day_activity(clean_id)
+        if any(h > 0 for h in aws_7d.get("monitoredHours", [])):
+            return aws_7d
 
     days = []
     dates = []
