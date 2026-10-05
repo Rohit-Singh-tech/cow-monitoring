@@ -25,7 +25,7 @@ const DEFAULT_ACTIVITIES = {
 
 export function ConfigProvider({ children, apiBase }) {
   const [activities, setActivities] = useState(DEFAULT_ACTIVITIES);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const fetchConfig = async () => {

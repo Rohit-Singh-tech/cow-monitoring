@@ -142,9 +142,11 @@ app = FastAPI(
 )
 
 # CORS Middleware
+# CORS Middleware - fully compliant with credentialed requests from Render & localhost
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=[o for o in settings.CORS_ORIGINS if o != "*"],
+    allow_origin_regex=r"https?://.*\.onrender\.com|http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -234,6 +236,7 @@ def api_discover_aws_devices(max_id: Optional[int] = None):
     }
 
 @app.get("/api/cow/{cow_id}/activity-log", tags=["Frontend Compatibility"])
+@app.get("/api/cow/{cow_id}/activity-logs", tags=["Frontend Compatibility"])
 def api_get_cow_activity_log(cow_id: str, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
     """Activity log using pre-computed ML inferences or AWS API."""
     from app.services.aws_service import AwsTelemetryService

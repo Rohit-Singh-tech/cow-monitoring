@@ -522,8 +522,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
               </thead>
               <tbody>
                 {filteredLogs && filteredLogs.length > 0 ? (
-                  filteredLogs.map(log => (
-                    <tr key={log.logId}>
+                  filteredLogs.map((log, idx) => (
+                    <tr key={`${log.logId || 'log'}-${log.startTime || ''}-${idx}`}>
                       <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontWeight: 700 }}>#{log.logId}</td>
                       <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 800 }}>
                         {data7Day?.device_id ? `Node-${data7Day.device_id}` : `Node-${cowId}`}
@@ -563,8 +563,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
           {/* Mobile / Tablet Responsive Timeline View (100% visible, zero horizontal scroll) */}
           <div className="logs-mobile-timeline">
             {filteredLogs && filteredLogs.length > 0 ? (
-              filteredLogs.map(log => (
-                <div key={log.logId} className="activity-log-card">
+              filteredLogs.map((log, idx) => (
+                <div key={`${log.logId || 'log'}-${log.startTime || ''}-${idx}`} className="activity-log-card">
                   <div className="log-card-header">
                     <div 
                       className="log-activity-badge" 

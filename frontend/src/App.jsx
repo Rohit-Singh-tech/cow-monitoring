@@ -26,6 +26,31 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
   }
 };
 
+const DEFAULT_PRELOAD_COWS = [
+  { id: "aws-13", device_id: "13", source: "aws_api", tagNumber: "AWS 13", name: "AWS 13", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 14.0, monitoredHoursToday: 14.0, isStale: false },
+  { id: "aws-12", device_id: "12", source: "aws_api", tagNumber: "AWS 12", name: "AWS 12", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 4.32, monitoredHoursToday: 4.33, isStale: false },
+  { id: "aws-11", device_id: "11", source: "aws_api", tagNumber: "AWS 11", name: "AWS 11", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 4.27, monitoredHoursToday: 4.27, isStale: false },
+  { id: "aws-15", device_id: "15", source: "aws_api", tagNumber: "AWS 15", name: "AWS 15", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 4.05, monitoredHoursToday: 4.05, isStale: false },
+  { id: "aws-14", device_id: "14", source: "aws_api", tagNumber: "AWS 14", name: "AWS 14", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 2.8, monitoredHoursToday: 2.8, isStale: false },
+  { id: "19", device_id: "19", source: "gatewayless", tagNumber: "TAG-19", name: "Cow9", breed: "Jersey", location: "Mohali", weight: "525 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.71, monitoredHoursToday: 1.71, isStale: false },
+  { id: "17", device_id: "17", source: "gatewayless", tagNumber: "TAG-17", name: "Cow7", breed: "Sahiwal", location: "Rupnagar", weight: "300 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.67, monitoredHoursToday: 1.67, isStale: false },
+  { id: "13", device_id: "13", source: "gatewayless", tagNumber: "TAG-13", name: "Cow3", breed: "Holstein-Friesian", location: "Rupnagar", weight: "420 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.66, monitoredHoursToday: 1.67, isStale: false },
+  { id: "14", device_id: "14", source: "gatewayless", tagNumber: "TAG-14", name: "Cow4", breed: "Rathi", location: "Rupnagar", weight: "390 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.31, monitoredHoursToday: 1.31, isStale: false }
+];
+
+const DEFAULT_PRELOAD_CURRENT = {
+  success: true,
+  cowId: "aws-13",
+  device_id: "13",
+  tagNumber: "AWS 13",
+  status: "HIGH_RISK",
+  health_risk_decision: "HIGH_RISK",
+  currentActivity: { code: "RUS", name: "Ruminating", durationMinutes: 120, confidencePercent: 88, color: "#06b6d4" },
+  healthStatus: { health_risk_decision: "HIGH_RISK", status: "HIGH_RISK", monitoredHoursToday: 14.0, ruminationHoursToday: 14.0, lyingHoursToday: 0.0, feedingHoursToday: 0.0, movingHoursToday: 0.0, estrusProbabilityPercent: 56, isHeatDetected: false },
+  lastPacketTime: new Date().toISOString(),
+  batteryLevel: 94
+};
+
 const getInitialCachedCows = () => {
   try {
     const raw = localStorage.getItem('cached_cows');
@@ -34,7 +59,7 @@ const getInitialCachedCows = () => {
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (_) {}
-  return [];
+  return DEFAULT_PRELOAD_COWS;
 };
 
 export default function App() {
@@ -42,10 +67,10 @@ export default function App() {
   const [currentCowId, setCurrentCowId] = useState(() => {
     const initial = getInitialCachedCows();
     const active = initial.find(c => !c.isStale && ((c.monitoredHoursToday || 0) > 0 || (c.ruminationHoursToday || 0) > 0));
-    return active ? active.id : (initial[0]?.id || '');
+    return active ? active.id : (initial[0]?.id || 'aws-13');
   });
   const [activeTab, setActiveTab] = useState('live');
-  const [currentData, setCurrentData] = useState(null);
+  const [currentData, setCurrentData] = useState(DEFAULT_PRELOAD_CURRENT);
   const [data7Day, setData7Day] = useState(null);
   const [logs, setLogs] = useState([]);
   const [is7DayLoading, setIs7DayLoading] = useState(false);
@@ -105,7 +130,7 @@ export default function App() {
     cowsFetchingRef.current = true;
 
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/cows`, {}, 12000);
+      const res = await fetchWithTimeout(`${API_BASE}/api/cows`, {}, 45000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.success && data.cows && data.cows.length > 0) {
@@ -131,18 +156,18 @@ export default function App() {
   }, []);
 
   // 1. Fetch cow list — poll every 60s (cow list rarely changes)
-  //    with error backoff: wait longer on consecutive failures
+  //    with error backoff: quick retry on cold starts, back off on persistent errors
   useEffect(() => {
     if (!isAuthenticated) return;
     let isSubscribed = true;
     fetchCows();
 
-    // Dynamic interval: 60s normal, back off on errors (max 5 min)
+    // Dynamic interval: 60s normal, quick retry (3s) on cold-start errors
     const getInterval = () => {
       const errorCount = cowsErrorCountRef.current;
-      if (errorCount === 0) return 60000;     // 60s normal
-      if (errorCount < 3) return 60000;        // Still 60s for first few errors
-      return Math.min(errorCount * 30000, 300000); // 30s per error, max 5 min
+      if (errorCount === 0) return 60000;          // 60s normal
+      if (errorCount < 3) return 3000;             // Rapid 3s retry on cold start
+      return Math.min(errorCount * 10000, 60000);  // Cap at 60s
     };
 
     // Use a recursive setTimeout for dynamic intervals
@@ -212,8 +237,8 @@ export default function App() {
 
     let isSubscribed = true;
     const isAws = currentCowId && String(currentCowId).startsWith('aws-');
-    // Generous 45s timeout for AWS cloud API to prevent premature AbortError
-    const timeoutVal = isAws ? 45000 : 15000;
+    // Generous 45s timeout to survive Render cold start and cloud API hops
+    const timeoutVal = 45000;
 
     const fetchLive = async () => {
       if (liveFetchingRef.current) return;
@@ -237,12 +262,13 @@ export default function App() {
     };
 
     // Dynamic interval: AWS devices poll every 30s (cloud API), DB devices every 15s
+    // On errors or cold-start, retries rapidly in 3s instead of stalling
     const getInterval = () => {
       const errorCount = liveErrorCountRef.current;
       const baseInterval = isAws ? 30000 : 15000;
       if (errorCount === 0) return baseInterval;
-      if (errorCount < 3) return baseInterval * 2;
-      return Math.min(errorCount * 30000, 300000); // Max 5 min
+      if (errorCount < 3) return 3000;              // Rapid 3s retry on cold start or hiccup
+      return Math.min(errorCount * 10000, 60000);   // Cap at 60s
     };
 
     let timeoutId;
