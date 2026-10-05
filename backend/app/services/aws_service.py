@@ -319,7 +319,17 @@ class AwsTelemetryService:
         if cached and cached["expires_at"] > time.time():
             return cached["data"]
 
-        url = f"{settings.AWS_COWNECK_API_URL}?deviceid={device_id}&startdate={resolved_start}&enddate={resolved_end}"
+        base_url = settings.AWS_COWNECK_API_URL
+        api_type = getattr(settings, "AWS_COWNECK_API_TYPE", "cow01")
+        query_params = []
+        if "type=" not in base_url and api_type:
+            query_params.append(f"type={api_type}")
+        query_params.append(f"deviceid={device_id}")
+        query_params.append(f"startdate={resolved_start}")
+        query_params.append(f"enddate={resolved_end}")
+
+        sep = "&" if "?" in base_url else "?"
+        url = f"{base_url}{sep}{'&'.join(query_params)}"
 
         # Give AWS Lambda functions sufficient timeout to cold-start without throwing false Read timed out
         today_str = now.strftime("%d-%m-%Y")
@@ -532,7 +542,8 @@ class AwsTelemetryService:
             return True
 
         # Probe today, yesterday, and past days in the rolling 7-day window dynamically
-        probe_dates = [(now - timedelta(days=i)).strftime("%d-%m-%Y") for i in range(7)]
+        now_dt = datetime.now(timezone.utc)
+        probe_dates = [(now_dt - timedelta(days=i)).strftime("%d-%m-%Y") for i in range(7)]
         for d_str in probe_dates:
             try:
                 pkts = cls.fetch_aws_raw(clean_id, start_date=d_str, end_date=d_str)

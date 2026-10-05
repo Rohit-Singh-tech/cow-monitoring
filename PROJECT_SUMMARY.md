@@ -67,7 +67,7 @@ The platform unifies two independent data streams into a single standardized dat
     *   **Result**: Eliminates historical leakage from previous days. For example, if a node recorded 1h 36m today, only today's sessions are accumulated, preventing yesterday's sessions from inflating today's totals.
 
 ### Telemetry Pipeline 2: AWS Cloud IoT Gateway API (`aws_api`)
-*   **Flow**: Cellular/Gateway nodes forward telemetry to AWS Lambda (`CowNeck_API_Function?deviceid={id}&startdate={start}&enddate={end}`).
+*   **Flow**: Cellular/Gateway nodes forward telemetry to AWS Lambda (`CowNeck_API_Function?type=cow01&deviceid={id}&startdate={start}&enddate={end}`).
 *   **Payload**: 240 string integers representing 80 sequential readings of $X, Y, Z$ at 10 Hz.
 *   **Dynamic 7-Day Rolling Window (Latest Enhancement)**:
     *   Date calculation is 100% dynamic relative to UTC today (`datetime.now(timezone.utc).date()`). No hardcoded dates exist in the codebase.

@@ -201,7 +201,7 @@ The system simultaneously ingests and federates data from two independent teleme
 
 ### Source 2: AWS Cloud IoT Gateway API (`aws_api`)
 * **Mechanism**: Direct wireless/cellular gateway nodes forward encrypted telemetry to an AWS Lambda API endpoint.
-* **API Route**: `GET /default/CowNeck_API_Function?deviceid={id}&startdate={start}&enddate={end}`
+* **API Route**: `GET /default/CowNeck_API_Function?type=cow01&deviceid={id}&startdate={start}&enddate={end}`
 * **Payload Structure**: 240 string integers representing 80 sequential readings of $X, Y, Z$ at 10 Hz.
 * **Resilience Features**:
   * **Dual-Tier RAM Caching**: In-memory LRU cache (`_AWS_CACHE`, `_AWS_DAILY_SUMMARIES`, `_AWS_ACTIVITY_LOGS_CACHE`) delivering sub-15ms dashboard response times.
@@ -332,7 +332,7 @@ cd cow-monitoring
      ```ini
      DATABASE_URL=postgresql://user:password@host/dbname
      MODEL_PATH=../cow_ml_models
-     AWS_COWNECK_API_URL=https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function
+     AWS_COWNECK_API_URL=https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function?type=cow01
      ```
 5. Launch the FastAPI server:
    ```bash

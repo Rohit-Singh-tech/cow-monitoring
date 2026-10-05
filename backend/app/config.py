@@ -31,8 +31,9 @@ class Settings(BaseSettings):
     # AWS CowNeck API Settings
     AWS_COWNECK_API_URL: str = os.getenv(
         "AWS_COWNECK_API_URL",
-        "https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function"
+        "https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function?type=cow01"
     )
+    AWS_COWNECK_API_TYPE: str = os.getenv("AWS_COWNECK_API_TYPE", "cow01")
     AWS_ENABLED_DEVICE_IDS: List[str] = [
         x.strip() for x in os.getenv(
             "AWS_ENABLED_DEVICE_IDS",
