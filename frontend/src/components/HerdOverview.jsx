@@ -160,18 +160,7 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
         {/* Total Herd */}
         <div 
           onClick={() => { setSourceFilter('ALL'); setHealthFilter('ALL'); }}
-          style={{
-            background: sourceFilter === 'ALL' && healthFilter === 'ALL' ? 'rgba(16, 185, 129, 0.12)' : 'var(--bg-elevated)',
-            border: sourceFilter === 'ALL' && healthFilter === 'ALL' ? '1px solid var(--accent-emerald)' : '1px solid var(--border-subtle)',
-            borderRadius: '12px',
-            padding: '0.85rem 1rem',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: sourceFilter === 'ALL' && healthFilter === 'ALL' ? '0 0 12px rgba(16, 185, 129, 0.2)' : 'none'
-          }}
+          className={`kpi-card kpi-all ${sourceFilter === 'ALL' && healthFilter === 'ALL' ? 'active' : ''}`}
           title="Click to view all cattle"
         >
           <div>
@@ -187,29 +176,18 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
         {/* AWS Cloud IoT */}
         <div 
           onClick={() => { setSourceFilter('aws_api'); setHealthFilter('ALL'); }}
-          style={{
-            background: sourceFilter === 'aws_api' ? 'rgba(245, 158, 11, 0.18)' : 'var(--bg-elevated)',
-            border: sourceFilter === 'aws_api' ? '1px solid #F59E0B' : '1px solid var(--border-subtle)',
-            borderRadius: '12px',
-            padding: '0.85rem 1rem',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: sourceFilter === 'aws_api' ? '0 0 14px rgba(245, 158, 11, 0.25)' : 'none'
-          }}
+          className={`kpi-card kpi-aws ${sourceFilter === 'aws_api' ? 'active' : ''}`}
           title="Click to filter only AWS Cloud IoT devices"
         >
           <div>
-            <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#FBBF24', letterSpacing: '0.05em', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <div className="kpi-label" style={{ fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.05em', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <span className="pulse-dot" style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B' }}></span>
               AWS CLOUD IOT
             </div>
-            <div style={{ fontSize: '1.45rem', fontWeight: 900, color: '#FBBF24', fontFamily: 'var(--font-display)', marginTop: '0.1rem' }}>{awsCount}</div>
+            <div className="kpi-val" style={{ fontSize: '1.45rem', fontWeight: 900, fontFamily: 'var(--font-display)', marginTop: '0.1rem' }}>{awsCount}</div>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Live Cloud Collars</div>
           </div>
-          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FBBF24', fontSize: '1.1rem' }}>
+          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#F59E0B', fontSize: '1.1rem' }}>
             <i className="fa-solid fa-cloud"></i>
           </div>
         </div>
@@ -217,26 +195,18 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
         {/* Gatewayless */}
         <div 
           onClick={() => { setSourceFilter('gatewayless'); setHealthFilter('ALL'); }}
-          style={{
-            background: sourceFilter === 'gatewayless' ? 'rgba(6, 182, 212, 0.18)' : 'var(--bg-elevated)',
-            border: sourceFilter === 'gatewayless' ? '1px solid #06B6D4' : '1px solid var(--border-subtle)',
-            borderRadius: '12px',
-            padding: '0.85rem 1rem',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: sourceFilter === 'gatewayless' ? '0 0 14px rgba(6, 182, 212, 0.25)' : 'none'
-          }}
+          className={`kpi-card kpi-gw ${sourceFilter === 'gatewayless' ? 'active' : ''}`}
           title="Click to filter only Gatewayless collars"
         >
           <div>
-            <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#38BDF8', letterSpacing: '0.05em', fontFamily: 'var(--font-mono)' }}>GATEWAYLESS</div>
-            <div style={{ fontSize: '1.45rem', fontWeight: 900, color: '#38BDF8', fontFamily: 'var(--font-display)', marginTop: '0.1rem' }}>{gatewaylessCount}</div>
+            <div className="kpi-label" style={{ fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.05em', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#06B6D4', display: 'inline-block' }}></span>
+              GATEWAYLESS
+            </div>
+            <div className="kpi-val" style={{ fontSize: '1.45rem', fontWeight: 900, fontFamily: 'var(--font-display)', marginTop: '0.1rem' }}>{gatewaylessCount}</div>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Direct Nodes</div>
           </div>
-          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(6, 182, 212, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38BDF8', fontSize: '1.1rem' }}>
+          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(6, 182, 212, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#06B6D4', fontSize: '1.1rem' }}>
             <i className="fa-solid fa-database"></i>
           </div>
         </div>
@@ -244,23 +214,12 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
         {/* Active Alerts */}
         <div 
           onClick={() => { setHealthFilter(healthFilter === 'ALERTS' ? 'ALL' : 'ALERTS'); }}
-          style={{
-            background: healthFilter === 'ALERTS' ? 'rgba(239, 68, 68, 0.2)' : 'var(--bg-elevated)',
-            border: healthFilter === 'ALERTS' ? '1px solid #EF4444' : '1px solid var(--border-subtle)',
-            borderRadius: '12px',
-            padding: '0.85rem 1rem',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: healthFilter === 'ALERTS' ? '0 0 14px rgba(239, 68, 68, 0.3)' : 'none'
-          }}
+          className={`kpi-card kpi-alert ${healthFilter === 'ALERTS' ? 'active' : ''}`}
           title="Click to filter cows with High Risk or Estrus Alert"
         >
           <div>
-            <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#F87171', letterSpacing: '0.05em', fontFamily: 'var(--font-mono)' }}>ACTIVE ALERTS</div>
-            <div style={{ fontSize: '1.45rem', fontWeight: 900, color: alertCount > 0 ? '#EF4444' : 'var(--text-primary)', fontFamily: 'var(--font-display)', marginTop: '0.1rem' }}>{alertCount}</div>
+            <div className="kpi-label" style={{ fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.05em', fontFamily: 'var(--font-mono)' }}>ACTIVE ALERTS</div>
+            <div className="kpi-val" style={{ fontSize: '1.45rem', fontWeight: 900, fontFamily: 'var(--font-display)', marginTop: '0.1rem' }}>{alertCount}</div>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>High Risk & Estrus</div>
           </div>
           <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#EF4444', fontSize: '1.1rem' }}>
@@ -272,62 +231,32 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
       {/* Filter and Search Bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem', background: 'var(--bg-elevated)', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
         {/* Source Segmented Tabs */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             onClick={() => setSourceFilter('ALL')}
-            style={{
-              padding: '0.4rem 0.85rem',
-              borderRadius: '8px',
-              border: 'none',
-              background: sourceFilter === 'ALL' ? 'var(--text-primary)' : 'rgba(255, 255, 255, 0.05)',
-              color: sourceFilter === 'ALL' ? 'var(--bg-main)' : 'var(--text-muted)',
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease'
-            }}
+            className={`source-tab-btn tab-all ${sourceFilter === 'ALL' ? 'active' : ''}`}
+            title="Show all cattle nodes"
           >
-            All Sources ({totalCount})
+            <i className="fa-solid fa-layer-group"></i>
+            <span>All Sources ({totalCount})</span>
           </button>
 
           <button
             onClick={() => setSourceFilter('aws_api')}
-            style={{
-              padding: '0.4rem 0.85rem',
-              borderRadius: '8px',
-              border: sourceFilter === 'aws_api' ? '1px solid #F59E0B' : '1px solid rgba(245, 158, 11, 0.3)',
-              background: sourceFilter === 'aws_api' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(245, 158, 11, 0.08)',
-              color: '#FBBF24',
-              fontSize: '0.75rem',
-              fontWeight: 800,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              transition: 'all 0.15s ease'
-            }}
+            className={`source-tab-btn tab-aws ${sourceFilter === 'aws_api' ? 'active' : ''}`}
+            title="Filter to AWS Cloud IoT devices"
           >
-            <i className="fa-solid fa-cloud"></i> AWS Cloud ({awsCount})
+            <i className="fa-solid fa-cloud"></i>
+            <span>AWS Cloud ({awsCount})</span>
           </button>
 
           <button
             onClick={() => setSourceFilter('gatewayless')}
-            style={{
-              padding: '0.4rem 0.85rem',
-              borderRadius: '8px',
-              border: sourceFilter === 'gatewayless' ? '1px solid #06B6D4' : '1px solid rgba(6, 182, 212, 0.3)',
-              background: sourceFilter === 'gatewayless' ? 'rgba(6, 182, 212, 0.25)' : 'rgba(6, 182, 212, 0.08)',
-              color: '#38BDF8',
-              fontSize: '0.75rem',
-              fontWeight: 800,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              transition: 'all 0.15s ease'
-            }}
+            className={`source-tab-btn tab-gw ${sourceFilter === 'gatewayless' ? 'active' : ''}`}
+            title="Filter to Gatewayless collar nodes"
           >
-            <i className="fa-solid fa-database"></i> Gatewayless ({gatewaylessCount})
+            <i className="fa-solid fa-database"></i>
+            <span>Gatewayless ({gatewaylessCount})</span>
           </button>
         </div>
 
@@ -477,37 +406,11 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
                         {cow.isStale ? 'NO DATA' : (cow.health_risk_decision || 'NO DATA').replace('_', ' ')}
                       </span>
                       {isAws ? (
-                        <span style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                          fontSize: '0.65rem',
-                          fontWeight: 800,
-                          letterSpacing: '0.04em',
-                          padding: '0.18rem 0.55rem',
-                          borderRadius: '999px',
-                          fontFamily: 'var(--font-mono)',
-                          background: 'rgba(245, 158, 11, 0.18)',
-                          color: '#FBBF24',
-                          border: '1px solid rgba(245, 158, 11, 0.4)'
-                        }}>
+                        <span className="badge-source aws">
                           <i className="fa-solid fa-cloud"></i> AWS Cloud
                         </span>
                       ) : (
-                        <span style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                          fontSize: '0.65rem',
-                          fontWeight: 800,
-                          letterSpacing: '0.04em',
-                          padding: '0.18rem 0.55rem',
-                          borderRadius: '999px',
-                          fontFamily: 'var(--font-mono)',
-                          background: 'rgba(6, 182, 212, 0.15)',
-                          color: '#38BDF8',
-                          border: '1px solid rgba(6, 182, 212, 0.4)'
-                        }}>
+                        <span className="badge-source db">
                           <i className="fa-solid fa-database"></i> Gatewayless
                         </span>
                       )}

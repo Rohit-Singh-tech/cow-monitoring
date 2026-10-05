@@ -1859,6 +1859,186 @@ body {
 }
 
 /* ==========================================================================
+   Source Segmented Filter Buttons (High Contrast Dark & Light Mode)
+   ========================================================================== */
+.source-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.95rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: var(--font-display);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* All Sources Tab */
+.source-tab-btn.tab-all {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+}
+:root.light-theme .source-tab-btn.tab-all {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.source-tab-btn.tab-all:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--accent-emerald);
+}
+:root.light-theme .source-tab-btn.tab-all:hover {
+  background: #f1f5f9;
+}
+.source-tab-btn.tab-all.active {
+  background: var(--accent-emerald) !important;
+  color: #ffffff !important;
+  border-color: var(--accent-emerald) !important;
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.4);
+  font-weight: 800;
+}
+
+/* AWS Cloud Tab */
+.source-tab-btn.tab-aws {
+  background: rgba(245, 158, 11, 0.16);
+  color: #FBBF24;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+}
+:root.light-theme .source-tab-btn.tab-aws {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #f59e0b;
+}
+.source-tab-btn.tab-aws:hover {
+  background: rgba(245, 158, 11, 0.28);
+  border-color: #F59E0B;
+}
+:root.light-theme .source-tab-btn.tab-aws:hover {
+  background: #fde68a;
+}
+.source-tab-btn.tab-aws.active {
+  background: #F59E0B !important;
+  color: #000000 !important;
+  border-color: #F59E0B !important;
+  box-shadow: 0 2px 14px rgba(245, 158, 11, 0.5);
+  font-weight: 800;
+}
+
+/* Gatewayless Tab */
+.source-tab-btn.tab-gw {
+  background: rgba(6, 182, 212, 0.16);
+  color: #38BDF8;
+  border: 1px solid rgba(6, 182, 212, 0.45);
+}
+:root.light-theme .source-tab-btn.tab-gw {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-color: #0284c7;
+}
+.source-tab-btn.tab-gw:hover {
+  background: rgba(6, 182, 212, 0.28);
+  border-color: #06B6D4;
+}
+:root.light-theme .source-tab-btn.tab-gw:hover {
+  background: #bae6fd;
+}
+.source-tab-btn.tab-gw.active {
+  background: #06B6D4 !important;
+  color: #000000 !important;
+  border-color: #06B6D4 !important;
+  box-shadow: 0 2px 14px rgba(6, 182, 212, 0.5);
+  font-weight: 800;
+}
+
+/* KPI Summary Cards */
+.kpi-card {
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+.kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.kpi-card.kpi-all.active {
+  border-color: var(--accent-emerald);
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.35);
+}
+.kpi-card.kpi-aws {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.08);
+}
+.kpi-card.kpi-aws.active {
+  border-color: #F59E0B;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.4);
+}
+.kpi-card.kpi-aws .kpi-label,
+.kpi-card.kpi-aws .kpi-val {
+  color: #FBBF24;
+}
+:root.light-theme .kpi-card.kpi-aws {
+  background: #fefce8;
+  border-color: #fcd34d;
+}
+:root.light-theme .kpi-card.kpi-aws .kpi-label,
+:root.light-theme .kpi-card.kpi-aws .kpi-val {
+  color: #92400e;
+}
+
+.kpi-card.kpi-gw {
+  border-color: rgba(6, 182, 212, 0.35);
+  background: rgba(6, 182, 212, 0.08);
+}
+.kpi-card.kpi-gw.active {
+  border-color: #06B6D4;
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
+}
+.kpi-card.kpi-gw .kpi-label,
+.kpi-card.kpi-gw .kpi-val {
+  color: #38BDF8;
+}
+:root.light-theme .kpi-card.kpi-gw {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+:root.light-theme .kpi-card.kpi-gw .kpi-label,
+:root.light-theme .kpi-card.kpi-gw .kpi-val {
+  color: #166534;
+}
+
+.kpi-card.kpi-alert {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+.kpi-card.kpi-alert.active {
+  border-color: #EF4444;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.45);
+}
+.kpi-card.kpi-alert .kpi-label,
+.kpi-card.kpi-alert .kpi-val {
+  color: #F87171;
+}
+:root.light-theme .kpi-card.kpi-alert {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+:root.light-theme .kpi-card.kpi-alert .kpi-label,
+:root.light-theme .kpi-card.kpi-alert .kpi-val {
+  color: #991b1b;
+}
+
+/* ==========================================================================
    Visibility Helpers
    ========================================================================== */
 .desktop-only {
