@@ -1,6 +1,6 @@
 from app.models.user import User
 from app.models.tag_registry import TagRegistry
-from app.models.datalogger import RawPacket, SensorPacket, DataloggerHeader, DataloggerPoint, MLInference, DailyCowSummary
+from app.models.datalogger import RawPacket, SensorPacket, DataloggerHeader, DataloggerPoint, MLInference, DailyCowSummary, SystemCache
 from app.models.ui_parameter import ActivityConfig
 
 __all__ = [
@@ -12,5 +12,6 @@ __all__ = [
     "DataloggerPoint",
     "MLInference",
     "DailyCowSummary",
+    "SystemCache",
     "ActivityConfig"
 ]

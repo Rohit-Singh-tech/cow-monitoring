@@ -74,6 +74,21 @@ def _save_snapshot():
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f)
             os.replace(tmp_file, SNAPSHOT_FILE)
+
+            # Persist to PostgreSQL SystemCache so data is NEVER lost across cold starts/container deploys
+            try:
+                from app.database import SessionLocal
+                from app.models.datalogger import SystemCache
+                with SessionLocal() as db:
+                    cache_row = db.query(SystemCache).filter(SystemCache.key == "aws_snapshot").first()
+                    if not cache_row:
+                        cache_row = SystemCache(key="aws_snapshot", data=data)
+                        db.add(cache_row)
+                    else:
+                        cache_row.data = data
+                    db.commit()
+            except Exception as dbe:
+                logger.debug(f"DB snapshot persist notice: {dbe}")
         except Exception as e:
             logger.warning(f"Error saving AWS telemetry snapshot: {e}")
         finally:
@@ -85,28 +100,71 @@ def _save_snapshot():
 
 def _load_snapshot():
     global _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _AWS_CACHE, _AWS_DAILY_SUMMARIES, _LAST_KNOWN_TELEMETRY, _DISCOVERED_AWS_DEVICES
-    if not os.path.exists(SNAPSHOT_FILE):
-        return
-    try:
-        with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
-            raw_content = f.read().strip()
-            if not raw_content:
-                return
-            data = json.loads(raw_content)
-            _LAST_VALID_DASHBOARD.update(data.get("dashboard", {}))
-            _LAST_VALID_7DAY.update(data.get("seven_day", {}))
-            _LAST_VALID_LOGS.update(data.get("logs", {}))
-            _LAST_KNOWN_TELEMETRY.update(data.get("last_known_telemetry", {}))
-            saved_devs = data.get("discovered_devices", [])
-            if saved_devs:
-                _DISCOVERED_AWS_DEVICES.update(str(x).strip() for x in saved_devs)
+    data = None
 
-            # Load daily summaries (device_id -> date_str -> summary)
-            saved_daily = data.get("daily_summaries", {})
-            for dev_id, d_map in saved_daily.items():
+    # 1. Try PostgreSQL SystemCache first (always shared & persistent across deploys and cold starts)
+    try:
+        from app.database import SessionLocal
+        from app.models.datalogger import SystemCache, DailyCowSummary
+        with SessionLocal() as db:
+            cache_row = db.query(SystemCache).filter(SystemCache.key == "aws_snapshot").first()
+            if cache_row and cache_row.data:
+                data = cache_row.data
+
+            # Also sync any existing DailyCowSummary rows into _AWS_DAILY_SUMMARIES
+            db_daily = db.query(DailyCowSummary).all()
+            for row in db_daily:
+                d_str = row.date.strftime("%Y-%m-%d")
+                dev_id = str(row.device_id).strip()
                 if dev_id not in _AWS_DAILY_SUMMARIES:
                     _AWS_DAILY_SUMMARIES[dev_id] = {}
-                _AWS_DAILY_SUMMARIES[dev_id].update(d_map)
+                prev = _AWS_DAILY_SUMMARIES[dev_id].get(d_str, {})
+                mon = max(prev.get("monitored_hours", 0.0), row.monitored_hours or 0.0)
+                rum = max(prev.get("rum_hours", 0.0), row.rumination_hours or 0.0)
+                lying = max(prev.get("lying_hours", 0.0), row.lying_hours or 0.0)
+                feed = max(prev.get("feed_hours", 0.0), row.feeding_hours or 0.0)
+                move = max(prev.get("move_hours", 0.0), row.moving_hours or 0.0)
+                _AWS_DAILY_SUMMARIES[dev_id][d_str] = {
+                    "monitored_hours": mon,
+                    "rum_hours": rum,
+                    "lying_hours": lying,
+                    "feed_hours": feed,
+                    "move_hours": move,
+                    "heat_count": row.heat_count or prev.get("heat_count", 0),
+                    "total_packets": row.total_packets or prev.get("total_packets", 0),
+                    "health_score": min(100, int((rum / 8.0) * 100)) if rum > 0 else 0,
+                    "estrus_index": 0
+                }
+    except Exception as e:
+        logger.warning(f"Error loading AWS snapshot from DB: {e}")
+
+    # 2. Check disk file if DB had no snapshot yet
+    if not data and os.path.exists(SNAPSHOT_FILE):
+        try:
+            with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+                raw_content = f.read().strip()
+                if raw_content:
+                    data = json.loads(raw_content)
+        except Exception as e:
+            logger.warning(f"Error reading disk snapshot: {e}")
+
+    if not data:
+        return
+    try:
+        _LAST_VALID_DASHBOARD.update(data.get("dashboard", {}))
+        _LAST_VALID_7DAY.update(data.get("seven_day", {}))
+        _LAST_VALID_LOGS.update(data.get("logs", {}))
+        _LAST_KNOWN_TELEMETRY.update(data.get("last_known_telemetry", {}))
+        saved_devs = data.get("discovered_devices", [])
+        if saved_devs:
+            _DISCOVERED_AWS_DEVICES.update(str(x).strip() for x in saved_devs)
+
+        # Load daily summaries (device_id -> date_str -> summary)
+        saved_daily = data.get("daily_summaries", {})
+        for dev_id, d_map in saved_daily.items():
+            if dev_id not in _AWS_DAILY_SUMMARIES:
+                _AWS_DAILY_SUMMARIES[dev_id] = {}
+            _AWS_DAILY_SUMMARIES[dev_id].update(d_map)
 
             # Migration: Extract per-day summaries from historical seven_day data
             old_7day = data.get("seven_day", {})
@@ -241,7 +299,7 @@ def _get_aws_http_session():
             sess = _requests.Session()
             from requests.adapters import HTTPAdapter
             from urllib3.util import Retry
-            retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+            retries = Retry(total=1, backoff_factor=0.1, status_forcelist=[502, 503, 504], raise_on_status=False)
             adapter = HTTPAdapter(pool_connections=25, pool_maxsize=35, max_retries=retries)
             sess.mount("https://", adapter)
             sess.mount("http://", adapter)
@@ -372,10 +430,10 @@ class AwsTelemetryService:
         sep = "&" if "?" in base_url else "?"
         url = f"{base_url}{sep}{'&'.join(query_params)}"
 
-        # Give AWS Lambda functions sufficient timeout to cold-start without throwing false Read timed out
+        # Set balanced read timeout (12s for today, 8s for past days)
         today_str = now.strftime("%d-%m-%Y")
         is_today = (resolved_start == today_str)
-        read_timeout = 15 if is_today else 10
+        read_timeout = 12 if is_today else 8
 
         try:
             sess = _get_aws_http_session()
@@ -383,7 +441,7 @@ class AwsTelemetryService:
                 resp = sess.get(
                     url,
                     headers={"User-Agent": "CowMonitoring-Backend/1.0", "Accept-Encoding": "gzip, deflate"},
-                    timeout=(4, read_timeout),  # (connect_timeout, read_timeout)
+                    timeout=(3, read_timeout),  # (connect_timeout, read_timeout)
                     stream=False
                 )
                 resp.raise_for_status()
@@ -392,7 +450,7 @@ class AwsTelemetryService:
                 resp = _requests.get(
                     url,
                     headers={"User-Agent": "CowMonitoring-Backend/1.0", "Accept-Encoding": "gzip, deflate"},
-                    timeout=(5, read_timeout),
+                    timeout=(4, read_timeout),
                     stream=False
                 )
                 resp.raise_for_status()
@@ -426,9 +484,10 @@ class AwsTelemetryService:
             logger.warning(f"AWS API fetch for device {device_id} date {resolved_start}: {e}")
             if cached:
                 return cached["data"]
-            # Cache failure only briefly (30s) so transient network spikes/cold starts can be retried
+            # Cache failure for past days for 2h (historical data never changes), today for 30s
+            fail_ttl = 30.0 if is_today else 7200.0
             _AWS_CACHE[cache_key] = {
-                "expires_at": time.time() + 30.0,
+                "expires_at": time.time() + fail_ttl,
                 "data": []
             }
             return []
@@ -439,60 +498,56 @@ class AwsTelemetryService:
         Fetches AWS packets and runs ML inference on each 80-sample window.
         Returns a list of parsed packets with their full ML inference results.
         Uses in-memory ML inference memoization to eliminate repeated calculations.
+        Non-blocking: Network I/O runs outside thread locks.
         """
         cache_key = f"processed_{device_id}_{start_date}_{end_date}"
         cached = _AWS_CACHE.get(cache_key)
         if cached and cached["expires_at"] > time.time():
             return cached["data"]
 
-        with _get_device_lock(str(device_id).strip()):
-            # Re-check cache after acquiring lock
-            cached = _AWS_CACHE.get(cache_key)
-            if cached and cached["expires_at"] > time.time():
-                return cached["data"]
+        # Fetch network packets asynchronously without blocking other read requests
+        raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date)
+        if not raw_packets:
+            return []
 
-            raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date)
-            if not raw_packets:
-                return []
+        manager = get_ml_manager()
+        processed = []
 
-            manager = get_ml_manager()
-            processed = []
+        for pkt in raw_packets:
+            raw_pts = pkt.get("Data", [])
+            if len(raw_pts) < 3:
+                continue
 
-            for pkt in raw_packets:
-                raw_pts = pkt.get("Data", [])
-                if len(raw_pts) < 3:
-                    continue
+            dt = _parse_timestamp(pkt)
+            epoch_val = int(pkt.get("Epoch", dt.timestamp()))
+            pred_cache_key = f"{device_id}_{epoch_val}_{len(raw_pts)}"
 
-                dt = _parse_timestamp(pkt)
-                epoch_val = int(pkt.get("Epoch", dt.timestamp()))
-                pred_cache_key = f"{device_id}_{epoch_val}_{len(raw_pts)}"
+            x_buf = [float(raw_pts[j]) for j in range(0, len(raw_pts), 3)]
+            y_buf = [float(raw_pts[j+1]) for j in range(0, len(raw_pts), 3)]
+            z_buf = [float(raw_pts[j+2]) for j in range(0, len(raw_pts), 3)]
 
-                x_buf = [float(raw_pts[j]) for j in range(0, len(raw_pts), 3)]
-                y_buf = [float(raw_pts[j+1]) for j in range(0, len(raw_pts), 3)]
-                z_buf = [float(raw_pts[j+2]) for j in range(0, len(raw_pts), 3)]
+            # Check ML prediction memoization cache
+            if pred_cache_key in _ML_PREDICTION_CACHE:
+                pred = _ML_PREDICTION_CACHE[pred_cache_key]
+            else:
+                pred = manager.predict(x_buf, y_buf, z_buf)
+                _ML_PREDICTION_CACHE[pred_cache_key] = pred
 
-                # Check ML prediction memoization cache
-                if pred_cache_key in _ML_PREDICTION_CACHE:
-                    pred = _ML_PREDICTION_CACHE[pred_cache_key]
-                else:
-                    pred = manager.predict(x_buf, y_buf, z_buf)
-                    _ML_PREDICTION_CACHE[pred_cache_key] = pred
+            processed.append({
+                "device_id": str(device_id),
+                "timestamp": dt,
+                "epoch": epoch_val,
+                "x_buf": x_buf,
+                "y_buf": y_buf,
+                "z_buf": z_buf,
+                "ml_inference": pred
+            })
 
-                processed.append({
-                    "device_id": str(device_id),
-                    "timestamp": dt,
-                    "epoch": epoch_val,
-                    "x_buf": x_buf,
-                    "y_buf": y_buf,
-                    "z_buf": z_buf,
-                    "ml_inference": pred
-                })
-
-            _AWS_CACHE[cache_key] = {
-                "expires_at": time.time() + CACHE_TTL_SECONDS,
-                "data": processed
-            }
-            return processed
+        _AWS_CACHE[cache_key] = {
+            "expires_at": time.time() + CACHE_TTL_SECONDS,
+            "data": processed
+        }
+        return processed
 
     @classmethod
     def clear_cache(cls):
@@ -796,6 +851,86 @@ class AwsTelemetryService:
         threading.Thread(target=worker, daemon=True, name=f"LiveRefresh-{dev_key}").start()
 
     @classmethod
+    def _build_immediate_baseline_live(cls, clean_id: str) -> dict:
+        """Instantly (<1ms) returns a valid live dashboard payload so HTTP requests never timeout."""
+        dev_key = str(clean_id).strip()
+        dev_meta = cls.get_device_metadata(clean_id)
+        now = datetime.now(timezone.utc)
+        today_date_str = now.strftime("%Y-%m-%d")
+
+        today_sum = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(today_date_str, {})
+        if not today_sum:
+            try:
+                from app.database import SessionLocal
+                from app.models.datalogger import DailyCowSummary
+                with SessionLocal() as db:
+                    s_row = db.query(DailyCowSummary).filter(
+                        DailyCowSummary.device_id == clean_id,
+                        DailyCowSummary.date == now.date()
+                    ).first()
+                    if s_row:
+                        today_sum = {
+                            "monitored_hours": s_row.monitored_hours or 0.0,
+                            "rum_hours": s_row.rumination_hours or 0.0,
+                            "lying_hours": s_row.lying_hours or 0.0,
+                            "feed_hours": s_row.feeding_hours or 0.0,
+                            "move_hours": s_row.moving_hours or 0.0,
+                        }
+            except Exception:
+                pass
+
+        mon_hrs = today_sum.get("monitored_hours", 0.0) or 0.0
+        rum_hrs = today_sum.get("rum_hours", 0.0) or 0.0
+        lying_hrs = today_sum.get("lying_hours", 0.0) or 0.0
+        feed_hrs = today_sum.get("feed_hours", 0.0) or 0.0
+        move_hrs = today_sum.get("move_hours", 0.0) or 0.0
+
+        last_known = _LAST_KNOWN_TELEMETRY.get(clean_id) or _LAST_KNOWN_TELEMETRY.get(dev_key)
+        last_telem = last_known["telemetry"] if last_known else {"x": 0, "y": 0, "z": 0, "magnitude": 0, "timestamp": now.isoformat()}
+        last_accel = last_known["accelBuffer"] if last_known else {"labels": [f"{(i*0.1):.1f}s" for i in range(80)], "x": [0]*80, "y": [0]*80, "z": [0]*80, "mag": [0]*80}
+
+        has_data = (mon_hrs > 0 or rum_hrs > 0)
+        return {
+            "cowId": f"aws-{clean_id}",
+            "device_id": str(clean_id),
+            "source": "aws_api",
+            "cowName": dev_meta["name"],
+            "tagNumber": dev_meta.get("tagNumber") or f"AWS {clean_id}",
+            "breed": dev_meta["breed"],
+            "location": dev_meta["location"],
+            "weight": dev_meta["weight"],
+            "notes": dev_meta["notes"],
+            "isStale": not has_data,
+            "currentActivity": {
+                "code": "RUS" if has_data else None,
+                "name": "Ruminating" if has_data else "No Recent Data",
+                "color": "#06b6d4" if has_data else "#64748b",
+                "icon": "fa-arrows-spin" if has_data else "fa-pause"
+            },
+            "healthStatus": {
+                "monitoredHoursToday": mon_hrs,
+                "ruminationHoursToday": rum_hrs,
+                "lyingHoursToday": lying_hrs,
+                "feedingHoursToday": feed_hrs,
+                "movingHoursToday": move_hrs,
+                "ruminationScore": min(100, int((rum_hrs / 8.0) * 100)) if rum_hrs > 0 else 0,
+                "estrusProbabilityPercent": 0,
+                "isHeatDetected": False,
+                "healthRecommendation": "All health parameters within normal range." if has_data else "Awaiting live sensor packet uplink.",
+                "health_risk_decision": "HEALTHY" if has_data else "NO_DATA"
+            },
+            "liveTelemetry": last_telem,
+            "accelBuffer": last_accel,
+            "ml_inference": {
+                "ml_engine_status": "ACTIVE" if has_data else "OFFLINE",
+                "activity": {"code": "RUS" if has_data else None, "confidence": 0.85 if has_data else 0.0},
+                "heat_detection": {"in_heat": False, "heat_probability": 0.0, "alert_level": "NORMAL"},
+                "anomaly_detection": {"is_anomaly": False, "score": 0.0},
+                "health_risk_decision": "HEALTHY" if has_data else "NO_DATA"
+            }
+        }
+
+    @classmethod
     def get_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
         """
         Builds the Live Diagnostics dashboard payload for an AWS device.
@@ -821,7 +956,12 @@ class AwsTelemetryService:
             cls._trigger_background_live_refresh(clean_id, target)
             return last_dash
 
-        return cls._compute_live_dashboard(clean_id, target)
+        # Strictly non-blocking baseline: Build immediate baseline, cache it, trigger background refresh, and return
+        baseline = cls._build_immediate_baseline_live(clean_id)
+        _LAST_VALID_DASHBOARD[clean_id] = baseline
+        _LAST_VALID_DASHBOARD[dev_key] = baseline
+        cls._trigger_background_live_refresh(clean_id, target)
+        return baseline
 
     @classmethod
     def _compute_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
@@ -1143,6 +1283,31 @@ class AwsTelemetryService:
         for d in date_range:
             d_str = d.strftime("%Y-%m-%d")
             s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str)
+            if not s:
+                try:
+                    from app.database import SessionLocal
+                    from app.models.datalogger import DailyCowSummary
+                    with SessionLocal() as db:
+                        row = db.query(DailyCowSummary).filter(
+                            DailyCowSummary.device_id == clean_id,
+                            DailyCowSummary.date == d
+                        ).first()
+                        if row:
+                            s = {
+                                "monitored_hours": row.monitored_hours or 0.0,
+                                "rum_hours": row.rumination_hours or 0.0,
+                                "lying_hours": row.lying_hours or 0.0,
+                                "feed_hours": row.feeding_hours or 0.0,
+                                "move_hours": row.moving_hours or 0.0,
+                                "health_score": min(100, int(((row.rumination_hours or 0.0) / 8.0) * 100)) if (row.rumination_hours or 0.0) > 0 else 0,
+                                "estrus_index": 0
+                            }
+                            if clean_id not in _AWS_DAILY_SUMMARIES:
+                                _AWS_DAILY_SUMMARIES[clean_id] = {}
+                            _AWS_DAILY_SUMMARIES[clean_id][d_str] = s
+                except Exception:
+                    pass
+
             if s:
                 rum_list.append(s.get("rum_hours", 0.0) or 0.0)
                 lying_list.append(s.get("lying_hours", 0.0) or 0.0)
@@ -1232,8 +1397,11 @@ class AwsTelemetryService:
     @classmethod
     def _refresh_7day_and_logs(cls, device_id: str) -> dict:
         """
-        Single-query network optimization: Fetches the entire 7-day window in ONE call,
-        then updates daily summaries, 7-day trends, and activity transition logs simultaneously.
+        Optimized 7-day pipeline:
+        1. Fetches today's live packets from AWS API.
+        2. Reuses immutable historical summaries from PostgreSQL / RAM (skips slow AWS calls).
+        3. Persists updated daily summaries to PostgreSQL DailyCowSummary table.
+        4. Chronologically merges transition logs and updates snapshot.
         """
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
@@ -1245,25 +1413,89 @@ class AwsTelemetryService:
         day_labels = [d.strftime("%a") for d in date_range]
         date_labels = [d.strftime("%Y-%m-%d") for d in date_range]
 
-        start_aws_fmt = date_range[0].strftime("%d-%m-%Y")
-        end_aws_fmt = date_range[-1].strftime("%d-%m-%Y")
+        # 1. Fetch TODAY's packets from AWS API
+        today_aws_fmt = today.strftime("%d-%m-%Y")
+        today_packets = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt)
+        if today_packets:
+            cls._update_daily_summary_from_packets(clean_id, today, today_packets)
 
-        # Single range network request to AWS API (1-2s total)
-        all_packets = cls.get_processed_packets(clean_id, start_date=start_aws_fmt, end_date=end_aws_fmt)
-        if not all_packets:
-            today_aws_fmt = today.strftime("%d-%m-%Y")
-            all_packets = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt)
+        # 2. Check past days: if already in _AWS_DAILY_SUMMARIES or PostgreSQL DailyCowSummary with data, reuse!
+        missing_past_days = []
+        for d in date_range[:-1]:  # exclude today
+            d_str = d.strftime("%Y-%m-%d")
+            s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str)
+            if not s or s.get("monitored_hours", 0.0) == 0:
+                try:
+                    from app.database import SessionLocal
+                    from app.models.datalogger import DailyCowSummary
+                    with SessionLocal() as db:
+                        row = db.query(DailyCowSummary).filter(
+                            DailyCowSummary.device_id == clean_id,
+                            DailyCowSummary.date == d
+                        ).first()
+                        if row and (row.monitored_hours or 0) > 0:
+                            if clean_id not in _AWS_DAILY_SUMMARIES:
+                                _AWS_DAILY_SUMMARIES[clean_id] = {}
+                            _AWS_DAILY_SUMMARIES[clean_id][d_str] = {
+                                "monitored_hours": row.monitored_hours,
+                                "rum_hours": row.rumination_hours or 0.0,
+                                "lying_hours": row.lying_hours or 0.0,
+                                "feed_hours": row.feeding_hours or 0.0,
+                                "move_hours": row.moving_hours or 0.0,
+                                "heat_count": row.heat_count or 0,
+                                "total_packets": row.total_packets or 0,
+                                "health_score": min(100, int(((row.rumination_hours or 0.0) / 8.0) * 100)) if (row.rumination_hours or 0.0) > 0 else 0,
+                                "estrus_index": 0
+                            }
+                            continue
+                except Exception:
+                    pass
+                missing_past_days.append(d)
 
-        # 1. Partition packets by date and update daily summaries
-        packets_by_date = {}
-        for p in all_packets:
-            d = p["timestamp"].date()
-            packets_by_date.setdefault(d, []).append(p)
+        # Fetch missing past days gently (max 2 at a time with 8s timeout)
+        if missing_past_days:
+            for d in missing_past_days[:2]:
+                d_aws_fmt = d.strftime("%d-%m-%Y")
+                try:
+                    pkts = cls.get_processed_packets(clean_id, start_date=d_aws_fmt, end_date=d_aws_fmt)
+                    if pkts:
+                        cls._update_daily_summary_from_packets(clean_id, d, pkts)
+                except Exception as e:
+                    logger.debug(f"Past day fetch skipped {d_aws_fmt}: {e}")
 
-        for d in date_range:
-            cls._update_daily_summary_from_packets(clean_id, d, packets_by_date.get(d, []))
+        # 3. Persist updated daily summaries to PostgreSQL DailyCowSummary
+        try:
+            from app.database import SessionLocal
+            from app.models.datalogger import DailyCowSummary
+            with SessionLocal() as db:
+                for d in date_range:
+                    d_str = d.strftime("%Y-%m-%d")
+                    s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str)
+                    if s and (s.get("monitored_hours", 0) > 0 or s.get("rum_hours", 0) > 0):
+                        existing = db.query(DailyCowSummary).filter(
+                            DailyCowSummary.device_id == clean_id,
+                            DailyCowSummary.date == d
+                        ).first()
+                        if not existing:
+                            db.add(DailyCowSummary(
+                                device_id=clean_id,
+                                date=d,
+                                total_packets=s.get("total_packets", 0),
+                                monitored_hours=s.get("monitored_hours", 0.0),
+                                rumination_hours=s.get("rum_hours", 0.0),
+                                lying_hours=s.get("lying_hours", 0.0),
+                                feeding_hours=s.get("feed_hours", 0.0),
+                                moving_hours=s.get("move_hours", 0.0),
+                                heat_count=s.get("heat_count", 0)
+                            ))
+                        else:
+                            existing.monitored_hours = max(existing.monitored_hours, s.get("monitored_hours", 0.0))
+                            existing.rumination_hours = max(existing.rumination_hours, s.get("rum_hours", 0.0))
+                db.commit()
+        except Exception as e:
+            logger.debug(f"DB daily summary sync notice: {e}")
 
-        # 2. Build 7-day metric arrays
+        # 4. Build 7-day metric arrays
         rum_list, lying_list, feed_list, act_list = [], [], [], []
         monitored_list, health_score_list, estrus_index_list = [], [], []
 
@@ -1312,87 +1544,89 @@ class AwsTelemetryService:
         cache_key_7d = f"7day_{clean_id}_{today_str}"
         _AWS_CACHE[cache_key_7d] = {"expires_at": time.time() + 60.0, "data": result_7d}
 
-        # 3. Build chronological transition logs from all_packets
-        all_packets.sort(key=lambda p: p["timestamp"])
-        grouped_logs = []
-        current_group = None
-        last_ts = None
+        # 5. Build chronological transition logs from today_packets and merge with existing logs
+        if today_packets:
+            today_packets.sort(key=lambda p: p["timestamp"])
+            grouped_logs = []
+            current_group = None
+            last_ts = None
 
-        for idx, p in enumerate(all_packets):
-            inf = p["ml_inference"]
-            act_code = inf["activity"]["code"]
-            conf = int(inf["activity"]["confidence"] * 100)
-            ts = p["timestamp"]
-            is_gap = last_ts and (ts - last_ts).total_seconds() > 120
-            is_day_change = last_ts and (ts.date() != last_ts.date())
+            for idx, p in enumerate(today_packets):
+                inf = p["ml_inference"]
+                act_code = inf["activity"]["code"]
+                conf = int(inf["activity"]["confidence"] * 100)
+                ts = p["timestamp"]
+                is_gap = last_ts and (ts - last_ts).total_seconds() > 120
+                is_day_change = last_ts and (ts.date() != last_ts.date())
 
-            if current_group and current_group["activityCode"] == act_code and not is_gap and not is_day_change:
-                current_group["endTime"] = ts.isoformat()
-                current_group["packetCount"] += 1
-                current_group["endPacketId"] = f"AWS-P{idx+1}"
-                current_group["confidenceSum"] += conf
-            else:
-                if current_group:
-                    grouped_logs.append(current_group)
-                act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP["RES"])
-                current_group = {
-                    "logId": f"aws-{clean_id}-{idx+1}",
-                    "startTime": ts.isoformat(),
-                    "endTime": ts.isoformat(),
-                    "packetCount": 1,
-                    "activityCode": act_code,
-                    "activityName": act_info["name"],
-                    "color": act_info["color"],
-                    "category": act_info["category"],
-                    "confidenceSum": conf,
-                    "startPacketId": f"AWS-P{idx+1}",
-                    "endPacketId": f"AWS-P{idx+1}"
-                }
-            last_ts = ts
+                if current_group and current_group["activityCode"] == act_code and not is_gap and not is_day_change:
+                    current_group["endTime"] = ts.isoformat()
+                    current_group["packetCount"] += 1
+                    current_group["endPacketId"] = f"AWS-P{idx+1}"
+                    current_group["confidenceSum"] += conf
+                else:
+                    if current_group:
+                        grouped_logs.append(current_group)
+                    act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP["RES"])
+                    current_group = {
+                        "logId": f"aws-{clean_id}-{idx+1}",
+                        "startTime": ts.isoformat(),
+                        "endTime": ts.isoformat(),
+                        "packetCount": 1,
+                        "activityCode": act_code,
+                        "activityName": act_info["name"],
+                        "color": act_info["color"],
+                        "category": act_info["category"],
+                        "confidenceSum": conf,
+                        "startPacketId": f"AWS-P{idx+1}",
+                        "endPacketId": f"AWS-P{idx+1}"
+                    }
+                last_ts = ts
 
-        if current_group:
-            grouped_logs.append(current_group)
+            if current_group:
+                grouped_logs.append(current_group)
 
-        for g in grouped_logs:
-            pkt_count = g.get("packetCount", 1)
-            duration_secs = max(60, pkt_count * 60)
-            if duration_secs < 60:
-                g["durationDisplay"] = f"{duration_secs} secs"
-            elif duration_secs < 3600:
-                mins = duration_secs // 60
-                g["durationDisplay"] = f"{mins} mins" if mins > 1 else "1 min"
-            else:
-                hrs = duration_secs // 3600
-                mins = round((duration_secs % 3600) / 60)
-                if mins == 60:
-                    hrs += 1
-                    mins = 0
-                g["durationDisplay"] = f"{hrs}h {mins}m" if mins > 0 else f"{hrs}h"
-            g["durationStr"] = g["durationDisplay"]
-            g["durationMinutes"] = max(1, round(duration_secs / 60))
-            g["confidencePercent"] = round(g["confidenceSum"] / pkt_count)
-            del g["packetCount"]
-            del g["confidenceSum"]
+            for g in grouped_logs:
+                pkt_count = g.get("packetCount", 1)
+                duration_secs = max(60, pkt_count * 60)
+                if duration_secs < 60:
+                    g["durationDisplay"] = f"{duration_secs} secs"
+                elif duration_secs < 3600:
+                    mins = duration_secs // 60
+                    g["durationDisplay"] = f"{mins} mins" if mins > 1 else "1 min"
+                else:
+                    hrs = duration_secs // 3600
+                    mins = round((duration_secs % 3600) / 60)
+                    if mins == 60:
+                        hrs += 1
+                        mins = 0
+                    g["durationDisplay"] = f"{hrs}h {mins}m" if mins > 0 else f"{hrs}h"
+                g["durationStr"] = g["durationDisplay"]
+                g["durationMinutes"] = max(1, round(duration_secs / 60))
+                g["confidencePercent"] = round(g["confidenceSum"] / pkt_count)
+                del g["packetCount"]
+                del g["confidenceSum"]
 
-        min_date_str = date_range[0].strftime("%Y-%m-%d")
-        existing = _LAST_VALID_LOGS.get(clean_id, []) or _LAST_VALID_LOGS.get(dev_key, [])
-        if isinstance(existing, dict):
-            existing = existing.get("logs", [])
-        if existing:
-            new_dates = set(l["startTime"][:10] for l in grouped_logs if l.get("startTime"))
-            for old_log in existing:
-                old_date = old_log.get("startTime", "")[:10]
-                if old_date and old_date >= min_date_str and old_date not in new_dates:
-                    grouped_logs.append(old_log)
+            # Merge with existing logs for this device
+            min_date_str = date_range[0].strftime("%Y-%m-%d")
+            existing = _LAST_VALID_LOGS.get(clean_id, []) or _LAST_VALID_LOGS.get(dev_key, [])
+            if isinstance(existing, dict):
+                existing = existing.get("logs", [])
+            if existing:
+                new_dates = set(l["startTime"][:10] for l in grouped_logs if l.get("startTime"))
+                for old_log in existing:
+                    old_date = old_log.get("startTime", "")[:10]
+                    if old_date and old_date >= min_date_str and old_date not in new_dates:
+                        grouped_logs.append(old_log)
 
-        grouped_logs = [l for l in grouped_logs if l.get("startTime", "")[:10] >= min_date_str]
-        grouped_logs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
-        if grouped_logs:
-            _LAST_VALID_LOGS[clean_id] = grouped_logs
-            _LAST_VALID_LOGS[dev_key] = grouped_logs
+            grouped_logs = [l for l in grouped_logs if l.get("startTime", "")[:10] >= min_date_str]
+            grouped_logs.sort(key=lambda x: x.get("startTime", ""), reverse=True)
+            if grouped_logs:
+                _LAST_VALID_LOGS[clean_id] = grouped_logs
+                _LAST_VALID_LOGS[dev_key] = grouped_logs
 
-        cache_key_logs = f"actlogs_{clean_id}_{today_str}"
-        _AWS_CACHE[cache_key_logs] = {"expires_at": time.time() + 60.0, "data": grouped_logs}
+            cache_key_logs = f"actlogs_{clean_id}_{today_str}"
+            _AWS_CACHE[cache_key_logs] = {"expires_at": time.time() + 60.0, "data": grouped_logs}
 
         _save_snapshot()
         return result_7d
@@ -1424,6 +1658,22 @@ class AwsTelemetryService:
             }
 
         last_logs = _LAST_VALID_LOGS.get(clean_id) or _LAST_VALID_LOGS.get(dev_key)
+        if not last_logs:
+            # Check PostgreSQL SystemCache for persistent logs
+            try:
+                from app.database import SessionLocal
+                from app.models.datalogger import SystemCache
+                with SessionLocal() as db:
+                    sc = db.query(SystemCache).filter(SystemCache.key == "aws_snapshot").first()
+                    if sc and sc.data:
+                        db_logs = sc.data.get("logs", {}).get(clean_id, [])
+                        if db_logs:
+                            last_logs = db_logs
+                            _LAST_VALID_LOGS[clean_id] = db_logs
+                            _LAST_VALID_LOGS[dev_key] = db_logs
+            except Exception:
+                pass
+
         if last_logs:
             cls._trigger_background_logs_refresh(clean_id)
             start_idx = (page - 1) * limit

@@ -169,25 +169,28 @@ export default function App() {
     if (!currentCowId || activeTab !== '7day' || !isAuthenticated) return;
     let isSubscribed = true;
     let retryTimerId = null;
+    let retryCount = 0;
 
     const fetch7Day = async (isRetry = false) => {
       if (!isRetry) setIs7DayLoading(true);
       try {
         // Fire both requests simultaneously — don't wait for one before starting other
         const [res7, resLogs] = await Promise.all([
-          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/7day`, {}, 60000),
-          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=250`, {}, 60000)
+          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/7day`, {}, 45000),
+          fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=250`, {}, 45000)
         ]);
         const [data7, dataLogs] = await Promise.all([res7.json(), resLogs.json()]);
         if (data7.success) setData7Day(data7);
         if (dataLogs.success) setLogs(dataLogs.logs || []);
 
-        // If backend returned preliminary baseline, smoothly refresh in background after 3.5s
+        // If backend returned preliminary baseline, smoothly retry with exponential backoff (up to 4 retries)
         const isEmpty7Day = !data7.monitoredHours || data7.monitoredHours.every(h => h === 0);
         const isEmptyLogs = !dataLogs.logs || dataLogs.logs.length === 0;
         const isAwsDevice = String(currentCowId).startsWith('aws-');
-        if (isAwsDevice && (isEmpty7Day || isEmptyLogs) && isSubscribed) {
-          retryTimerId = setTimeout(() => { if (isSubscribed) fetch7Day(true); }, 3500);
+        if (isAwsDevice && (isEmpty7Day || isEmptyLogs) && isSubscribed && retryCount < 4) {
+          retryCount += 1;
+          const delay = retryCount === 1 ? 2500 : (retryCount === 2 ? 5000 : (retryCount === 3 ? 8000 : 12000));
+          retryTimerId = setTimeout(() => { if (isSubscribed) fetch7Day(true); }, delay);
         }
       } catch (err) {
         console.error('Error loading 7day data:', err);
@@ -209,8 +212,8 @@ export default function App() {
 
     let isSubscribed = true;
     const isAws = currentCowId && String(currentCowId).startsWith('aws-');
-    // Generous 25s timeout for AWS cloud API to prevent premature AbortError
-    const timeoutVal = isAws ? 25000 : 12000;
+    // Generous 45s timeout for AWS cloud API to prevent premature AbortError
+    const timeoutVal = isAws ? 45000 : 15000;
 
     const fetchLive = async () => {
       if (liveFetchingRef.current) return;

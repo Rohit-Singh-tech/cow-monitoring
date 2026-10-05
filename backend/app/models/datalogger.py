@@ -89,3 +89,12 @@ class DailyCowSummary(Base):
     feeding_hours = Column(Float, default=0.0)
     moving_hours = Column(Float, default=0.0)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SystemCache(Base):
+    """Persistent Key-Value JSON cache across server restarts and Render cold starts."""
+    __tablename__ = "system_caches"
+
+    key = Column(String(100), primary_key=True, index=True)
+    data = Column(JSON, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -29,8 +29,7 @@ ENV/
 # Environment variables
 .env
 
-# AWS telemetry snapshots and temporary files
-.aws_telemetry_snapshot.json*
+# Temporary files
 *.tmp
 
 # IDEs
