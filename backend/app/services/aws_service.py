@@ -111,20 +111,20 @@ def _load_snapshot():
             if cache_row and cache_row.data:
                 data = cache_row.data
 
-            # Also sync any existing DailyCowSummary rows into _AWS_DAILY_SUMMARIES
-            db_daily = db.query(DailyCowSummary).all()
+            # Only sync AWS DailyCowSummary rows (prefixed with aws-) into _AWS_DAILY_SUMMARIES
+            db_daily = db.query(DailyCowSummary).filter(DailyCowSummary.device_id.ilike("aws-%")).all()
             for row in db_daily:
                 d_str = row.date.strftime("%Y-%m-%d")
-                dev_id = str(row.device_id).strip()
-                if dev_id not in _AWS_DAILY_SUMMARIES:
-                    _AWS_DAILY_SUMMARIES[dev_id] = {}
-                prev = _AWS_DAILY_SUMMARIES[dev_id].get(d_str, {})
+                clean_dev_id = str(row.device_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+                if clean_dev_id not in _AWS_DAILY_SUMMARIES:
+                    _AWS_DAILY_SUMMARIES[clean_dev_id] = {}
+                prev = _AWS_DAILY_SUMMARIES[clean_dev_id].get(d_str, {})
                 mon = max(prev.get("monitored_hours", 0.0), row.monitored_hours or 0.0)
                 rum = max(prev.get("rum_hours", 0.0), row.rumination_hours or 0.0)
                 lying = max(prev.get("lying_hours", 0.0), row.lying_hours or 0.0)
                 feed = max(prev.get("feed_hours", 0.0), row.feeding_hours or 0.0)
                 move = max(prev.get("move_hours", 0.0), row.moving_hours or 0.0)
-                _AWS_DAILY_SUMMARIES[dev_id][d_str] = {
+                _AWS_DAILY_SUMMARIES[clean_dev_id][d_str] = {
                     "monitored_hours": mon,
                     "rum_hours": rum,
                     "lying_hours": lying,
@@ -642,8 +642,8 @@ class AwsTelemetryService:
                         elif tag_notes and "aws" in tag_notes.lower():
                             clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
                             tag_ids.add(clean)
-                    # Include devices with existing DailyCowSummary rows
-                    daily_devs = db.query(DailyCowSummary.device_id).distinct().all()
+                    # Include devices with existing DailyCowSummary rows explicitly belonging to AWS
+                    daily_devs = db.query(DailyCowSummary.device_id).filter(DailyCowSummary.device_id.ilike("aws-%")).distinct().all()
                     for (d_id,) in daily_devs:
                         if d_id:
                             clean = str(d_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
@@ -903,7 +903,7 @@ class AwsTelemetryService:
                 from app.models.datalogger import DailyCowSummary
                 with SessionLocal() as db:
                     s_row = db.query(DailyCowSummary).filter(
-                        DailyCowSummary.device_id == clean_id,
+                        DailyCowSummary.device_id == f"aws-{clean_id}",
                         DailyCowSummary.date == now.date()
                     ).first()
                     if s_row:
@@ -1332,7 +1332,7 @@ class AwsTelemetryService:
                     from app.models.datalogger import DailyCowSummary
                     with SessionLocal() as db:
                         row = db.query(DailyCowSummary).filter(
-                            DailyCowSummary.device_id == clean_id,
+                            DailyCowSummary.device_id == f"aws-{clean_id}",
                             DailyCowSummary.date == d
                         ).first()
                         if row and ((row.monitored_hours or 0) > 0 or (row.total_packets or 0) > 0):
@@ -1493,7 +1493,7 @@ class AwsTelemetryService:
                     from app.models.datalogger import DailyCowSummary
                     with SessionLocal() as db:
                         row = db.query(DailyCowSummary).filter(
-                            DailyCowSummary.device_id == clean_id,
+                            DailyCowSummary.device_id == f"aws-{clean_id}",
                             DailyCowSummary.date == d
                         ).first()
                         if row and (row.monitored_hours or 0) > 0:
@@ -1531,17 +1531,18 @@ class AwsTelemetryService:
             from app.database import SessionLocal
             from app.models.datalogger import DailyCowSummary
             with SessionLocal() as db:
+                aws_db_id = f"aws-{clean_id}"
                 for d in date_range:
                     d_str = d.strftime("%Y-%m-%d")
                     s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str)
                     if s and (s.get("monitored_hours", 0) > 0 or s.get("rum_hours", 0) > 0):
                         existing = db.query(DailyCowSummary).filter(
-                            DailyCowSummary.device_id == clean_id,
+                            DailyCowSummary.device_id == aws_db_id,
                             DailyCowSummary.date == d
                         ).first()
                         if not existing:
                             db.add(DailyCowSummary(
-                                device_id=clean_id,
+                                device_id=aws_db_id,
                                 date=d,
                                 total_packets=s.get("total_packets", 0),
                                 monitored_hours=s.get("monitored_hours", 0.0),
@@ -1889,7 +1890,7 @@ class AwsTelemetryService:
             min_date = now_dt.date() - timedelta(days=6)
             with SessionLocal() as db:
                 row = db.query(DailyCowSummary.id).filter(
-                    DailyCowSummary.device_id == dev_key,
+                    DailyCowSummary.device_id == f"aws-{dev_key}",
                     DailyCowSummary.date >= min_date,
                     (DailyCowSummary.monitored_hours > 0) | (DailyCowSummary.total_packets > 0)
                 ).first()

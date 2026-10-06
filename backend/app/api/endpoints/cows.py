@@ -249,7 +249,8 @@ def get_herd_overview(db: Session = Depends(get_db)):
             if db_cows:
                 today = date.today()
                 all_summaries = db.query(DailyCowSummary).filter(
-                    DailyCowSummary.date == today
+                    DailyCowSummary.date == today,
+                    ~DailyCowSummary.device_id.ilike("aws-%")
                 ).all()
                 summaries_by_device = {s.device_id: s for s in all_summaries}
 
@@ -471,13 +472,7 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     ts = header.timestamp if header else None
     stale = _is_device_stale(ts)
 
-    # If DB device has no data or is stale, check if this device is an active AWS collar with live data
-    clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-    if (not header or stale) and AwsTelemetryService.is_aws_device(clean_id):
-        aws_dash = AwsTelemetryService.get_live_dashboard(clean_id, target_date=target_date)
-        if not aws_dash.get("isStale"):
-            return aws_dash
-    
+
     # Get accelerometer points for the latest header
     x_buf, y_buf, z_buf = [], [], []
     if header:
@@ -741,11 +736,6 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
                 d = day_str
             sql_fallback_by_date[d] = r[1]
 
-    clean_id = str(cow_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-    if not summaries and not sql_fallback_by_date and AwsTelemetryService.is_aws_device(clean_id):
-        aws_7d = AwsTelemetryService.get_7day_activity(clean_id)
-        if any(h > 0 for h in aws_7d.get("monitoredHours", [])):
-            return aws_7d
 
     days = []
     dates = []

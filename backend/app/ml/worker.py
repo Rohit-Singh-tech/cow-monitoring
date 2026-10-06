@@ -108,10 +108,11 @@ def update_daily_summaries(db, target_date=None):
     if target_date is None:
         target_date = date.today()
     
-    # Get all active devices from TagRegistry and datalogger_headers
+    # Get all active devices from TagRegistry and datalogger_headers (excluding AWS devices)
     devs_from_tags = [d[0] for d in db.query(TagRegistry.device_id).all() if d[0]]
     devs_from_hdrs = [d[0] for d in db.execute(text("SELECT DISTINCT device_id FROM datalogger_headers")).fetchall() if d[0]]
-    devices = sorted(list(set(devs_from_tags) | set(devs_from_hdrs)))
+    raw_devices = sorted(list(set(devs_from_tags) | set(devs_from_hdrs)))
+    devices = [d for d in raw_devices if not str(d).strip().lower().startswith("aws-") and not str(d).strip().lower().startswith("aws ")]
 
     for dev_id in devices:
         try:
@@ -217,7 +218,7 @@ def backfill_historical_summaries(db):
         FROM datalogger_headers h
         LEFT JOIN daily_cow_summaries s 
             ON h.device_id = s.device_id AND DATE(h.timestamp) = s.date
-        WHERE s.id IS NULL
+        WHERE s.id IS NULL AND NOT (h.device_id ILIKE 'aws-%')
         ORDER BY data_date DESC
     """)
     try:

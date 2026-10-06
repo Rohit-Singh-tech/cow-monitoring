@@ -55,10 +55,11 @@ def main():
                 fetch_dt = time.time() - t0
                 tot = len(raw_pkts)
 
+                aws_db_id = f"aws-{dev_id}"
                 if tot == 0:
                     # Check if DB already has verified historical data for this date
                     existing = db.query(DailyCowSummary).filter(
-                        DailyCowSummary.device_id == dev_id,
+                        DailyCowSummary.device_id == aws_db_id,
                         DailyCowSummary.date == d
                     ).first()
                     if existing and (existing.monitored_hours or 0) > 0:
@@ -68,7 +69,7 @@ def main():
                     print(f"  [{d_str}] 0 packets ({fetch_dt:.1f}s)", flush=True)
                     if not existing:
                         db.add(DailyCowSummary(
-                            device_id=dev_id,
+                            device_id=aws_db_id,
                             date=d,
                             total_packets=0,
                             monitored_hours=0.0,
@@ -122,13 +123,13 @@ def main():
 
                 # Persist to PostgreSQL DailyCowSummary
                 existing = db.query(DailyCowSummary).filter(
-                    DailyCowSummary.device_id == dev_id,
+                    DailyCowSummary.device_id == aws_db_id,
                     DailyCowSummary.date == d
                 ).first()
 
                 if not existing:
                     db.add(DailyCowSummary(
-                        device_id=dev_id,
+                        device_id=aws_db_id,
                         date=d,
                         total_packets=tot,
                         monitored_hours=mon_hrs,
