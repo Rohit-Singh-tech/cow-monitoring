@@ -345,10 +345,9 @@ _TAG_AWS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": set()}
 _ML_PREDICTION_CACHE: Dict[str, Any] = {}
 _HERD_IS_REFRESHING = False
 _REFRESH_THREAD_LOCK = threading.Lock()
-_TAGS_LOADED_AT = 0.0
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 20.0
+AWS_TODAY_CACHE_TTL = 15.0  # 15s rapid live cache so new sensor packets and refreshes appear immediately
 
-# Per-device locks to coalesce concurrent in-flight requests and prevent duplicate AWS calls
 _IN_FLIGHT_DEVICE_LOCKS: Dict[str, threading.Lock] = {}
 _GLOBAL_LOCK = threading.Lock()
 
@@ -426,12 +425,12 @@ def _parse_timestamp(pkt: dict) -> datetime:
 
 class AwsTelemetryService:
     @staticmethod
-    def fetch_aws_raw(device_id: str, start_date: str = None, end_date: str = None) -> List[dict]:
+    def fetch_aws_raw(device_id: str, start_date: str = None, end_date: str = None, force_refresh: bool = False) -> List[dict]:
         """
         Fetch raw packets from AWS Lambda CowNeck_API_Function.
         Handles gzip decompression, timeouts, and network errors.
-        - Past days: 6s timeout, empty results cached 24h (no repeated timeouts).
-        - Today: 10s timeout, results cached 5min.
+        - Past days: 6s timeout, empty results cached 24h.
+        - Today: results cached AWS_TODAY_CACHE_TTL (15s) so fresh incoming packets reflect immediately.
         """
         now = datetime.now(IST)
         
@@ -467,7 +466,7 @@ class AwsTelemetryService:
 
                 combined = []
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(day_strs))) as pool:
-                    future_to_day = {pool.submit(AwsTelemetryService.fetch_aws_raw, device_id, start_date=d, end_date=d): d for d in day_strs}
+                    future_to_day = {pool.submit(AwsTelemetryService.fetch_aws_raw, device_id, start_date=d, end_date=d, force_refresh=force_refresh): d for d in day_strs}
                     # Keep sorted by date
                     day_pkts_map = {}
                     for fut in concurrent.futures.as_completed(future_to_day):
@@ -485,7 +484,7 @@ class AwsTelemetryService:
 
         cache_key = f"raw_{device_id}_{resolved_start}_{resolved_end}"
         cached = _AWS_CACHE.get(cache_key)
-        if cached and cached["expires_at"] > time.time():
+        if not force_refresh and cached and cached["expires_at"] > time.time():
             return cached["data"]
 
         base_url = settings.AWS_COWNECK_API_URL
@@ -543,8 +542,8 @@ class AwsTelemetryService:
             # Sort packets chronologically ascending
             packets.sort(key=lambda p: int(p.get("Epoch", 0)))
 
-            # Cache past days for 24h — historical data never changes
-            ttl = CACHE_TTL_SECONDS if is_today else 86400
+            # Cache past days for 24h. Today's live telemetry is cached for AWS_TODAY_CACHE_TTL (15s)
+            ttl = AWS_TODAY_CACHE_TTL if is_today else 86400
             _AWS_CACHE[cache_key] = {
                 "expires_at": time.time() + ttl,
                 "data": packets
@@ -552,10 +551,10 @@ class AwsTelemetryService:
             return packets
         except Exception as e:
             logger.warning(f"AWS API fetch for device {device_id} date {resolved_start}: {e}")
-            if cached:
+            if cached and not force_refresh:
                 return cached["data"]
-            # Cache failure briefly (15s) so background retries can succeed promptly
-            fail_ttl = 15.0
+            # Cache failure briefly (10s) so background retries can succeed promptly
+            fail_ttl = 10.0
             _AWS_CACHE[cache_key] = {
                 "expires_at": time.time() + fail_ttl,
                 "data": []
@@ -563,7 +562,7 @@ class AwsTelemetryService:
             return []
 
     @classmethod
-    def get_processed_packets(cls, device_id: str, start_date: str = None, end_date: str = None) -> List[dict]:
+    def get_processed_packets(cls, device_id: str, start_date: str = None, end_date: str = None, force_refresh: bool = False) -> List[dict]:
         """
         Fetches AWS packets and runs ML inference on each 80-sample window.
         Returns a list of parsed packets with their full ML inference results.
@@ -572,11 +571,11 @@ class AwsTelemetryService:
         """
         cache_key = f"processed_{device_id}_{start_date}_{end_date}"
         cached = _AWS_CACHE.get(cache_key)
-        if cached and cached["expires_at"] > time.time():
+        if not force_refresh and cached and cached["expires_at"] > time.time():
             return cached["data"]
 
         # Fetch network packets asynchronously without blocking other read requests
-        raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date)
+        raw_packets = cls.fetch_aws_raw(device_id, start_date=start_date, end_date=end_date, force_refresh=force_refresh)
         if not raw_packets:
             return []
 
@@ -613,8 +612,11 @@ class AwsTelemetryService:
                 "ml_inference": pred
             })
 
+        now_ist = datetime.now(IST)
+        is_today = (start_date == now_ist.strftime("%d-%m-%Y") or start_date is None)
+        ttl = AWS_TODAY_CACHE_TTL if is_today else 86400
         _AWS_CACHE[cache_key] = {
-            "expires_at": time.time() + CACHE_TTL_SECONDS,
+            "expires_at": time.time() + ttl,
             "data": processed
         }
         return processed
@@ -921,7 +923,7 @@ class AwsTelemetryService:
         return meta
 
     @classmethod
-    def _trigger_background_live_refresh(cls, clean_id: str, target_date: str):
+    def _trigger_background_live_refresh(cls, clean_id: str, target_date: str, force_refresh: bool = False):
         dev_key = str(clean_id).strip()
         with _LIVE_REFRESH_LOCK:
             if dev_key in _LIVE_REFRESHING_SET:
@@ -930,7 +932,7 @@ class AwsTelemetryService:
 
         def worker():
             try:
-                cls._compute_live_dashboard(dev_key, target_date)
+                cls._compute_live_dashboard(dev_key, target_date, force_refresh=force_refresh)
             except Exception as e:
                 logger.warning(f"Error in background live refresh for dev {dev_key}: {e}")
             finally:
@@ -1020,11 +1022,12 @@ class AwsTelemetryService:
         }
 
     @classmethod
-    def get_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
+    def get_live_dashboard(cls, device_id: str, target_date: str = None, force_refresh: bool = False) -> dict:
         """
         Builds the Live Diagnostics dashboard payload for an AWS device.
         Matches exact schema of get_cow_live_dashboard in cows.py.
         STRICTLY NON-BLOCKING: returns immediately (<2ms) from RAM/snapshot and refreshes in background.
+        If force_refresh is True, bypasses cache and returns fresh calculation immediately.
         """
         now_ist = datetime.now(IST)
         today_date_str = now_ist.strftime("%d-%m-%Y")
@@ -1032,6 +1035,9 @@ class AwsTelemetryService:
         target = target_date or today_date_str
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+
+        if force_refresh:
+            return cls._compute_live_dashboard(clean_id, target, force_refresh=True)
 
         cache_key = f"live_{clean_id}_{target}"
         now_ts = time.time()
@@ -1173,7 +1179,7 @@ class AwsTelemetryService:
         }
 
     @classmethod
-    def _compute_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
+    def _compute_live_dashboard(cls, device_id: str, target_date: str = None, force_refresh: bool = False) -> dict:
         now_ist = datetime.now(IST)
         today_date_str = now_ist.strftime("%d-%m-%Y")
         is_querying_today = (target_date is None or target_date == today_date_str)
@@ -1182,7 +1188,7 @@ class AwsTelemetryService:
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         cache_key = f"live_{clean_id}_{target}"
 
-        packets = cls.get_processed_packets(clean_id, start_date=target, end_date=target)
+        packets = cls.get_processed_packets(clean_id, start_date=target, end_date=target, force_refresh=force_refresh)
         dev_meta = cls.get_device_metadata(clean_id)
 
         # Filter packets strictly belonging to target date in IST
@@ -1410,7 +1416,7 @@ class AwsTelemetryService:
 
         _HERD_ITEMS_CACHE["expires_at"] = 0.0
         _save_snapshot()
-        _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": live_payload}
+        _AWS_CACHE[cache_key] = {"expires_at": time.time() + (AWS_TODAY_CACHE_TTL if is_querying_today else 86400), "data": live_payload}
         return live_payload
 
     @classmethod
@@ -1579,10 +1585,11 @@ class AwsTelemetryService:
         }
 
     @classmethod
-    def get_7day_activity(cls, device_id: str) -> dict:
+    def get_7day_activity(cls, device_id: str, force_refresh: bool = False) -> dict:
         """
         Builds the 7-day behavior distribution for an AWS device.
         STRICTLY NON-BLOCKING: Returns immediately from cache or snapshot (<2ms) and refreshes in background.
+        If force_refresh is True, bypasses cache and recomputes with fresh packets immediately.
         """
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
@@ -1593,16 +1600,16 @@ class AwsTelemetryService:
         cache_key = f"7day_{clean_id}_{today_str}"
         now_ts = time.time()
         cached = _AWS_CACHE.get(cache_key)
-        if cached and cached.get("expires_at", 0) > now_ts:
+        if not force_refresh and cached and cached.get("expires_at", 0) > now_ts:
             return cached["data"]
 
-        # Stale-While-Revalidate: Return last valid 7day immediately (<2ms) if up-to-date
+        # Stale-While-Revalidate: Return last valid 7day immediately (<2ms) if up-to-date and not forced
         date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
         expected_dates = [d.strftime("%Y-%m-%d") for d in date_range]
         last_7d = _LAST_VALID_7DAY.get(clean_id) or _LAST_VALID_7DAY.get(dev_key)
 
         is_valid_7d = False
-        if last_7d and last_7d.get("dates") == expected_dates:
+        if not force_refresh and last_7d and last_7d.get("dates") == expected_dates:
             has_gap = False
             mons = last_7d.get("monitoredHours", [])
             for idx, d_str in enumerate(expected_dates):
@@ -1672,7 +1679,7 @@ class AwsTelemetryService:
 
         # 1. Fetch TODAY's packets from AWS API
         today_aws_fmt = today.strftime("%d-%m-%Y")
-        today_packets = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt)
+        today_packets = cls.get_processed_packets(clean_id, start_date=today_aws_fmt, end_date=today_aws_fmt, force_refresh=force_refresh)
         if today_packets:
             cls._update_daily_summary_from_packets(clean_id, today, today_packets)
 
@@ -1805,7 +1812,7 @@ class AwsTelemetryService:
         _LAST_VALID_7DAY[clean_id] = result_7d
         _LAST_VALID_7DAY[dev_key] = result_7d
         cache_key_7d = f"7day_{clean_id}_{today_str}"
-        _AWS_CACHE[cache_key_7d] = {"expires_at": time.time() + 60.0, "data": result_7d}
+        _AWS_CACHE[cache_key_7d] = {"expires_at": time.time() + AWS_TODAY_CACHE_TTL, "data": result_7d}
 
         # Atomically synchronize Live Diagnostics dashboard health status with today's metrics
         s_today = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(today_str)
@@ -2005,18 +2012,18 @@ class AwsTelemetryService:
             logger.info("Continuous AWS telemetry refresher background daemon started.")
             while True:
                 try:
-                    time.sleep(30)
+                    time.sleep(20)  # Check every 20 seconds for fresh collar telemetry
                     active_ids = [d for d in cls.get_known_device_ids() if cls.device_has_7day_data(d)]
                     today_str = datetime.now(IST).strftime("%d-%m-%Y")
                     for dev_id in active_ids:
                         try:
-                            cls._compute_live_dashboard(dev_id, today_str)
+                            cls._compute_live_dashboard(dev_id, today_str, force_refresh=True)
                         except Exception:
                             pass
-                        time.sleep(1.5)  # gentle pacing to avoid bursting CPU/network
+                        time.sleep(1.0)  # gentle pacing to avoid bursting CPU/network
                 except Exception as e:
                     logger.warning(f"Error in telemetry refresher daemon: {e}")
-                    time.sleep(30)
+                    time.sleep(20)
 
         t = threading.Thread(target=daemon_loop, daemon=True, name="AwsTelemetryRefresherDaemon")
         t.start()
