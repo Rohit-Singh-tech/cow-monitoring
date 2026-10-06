@@ -138,15 +138,16 @@ export default function App() {
       const res = await fetchWithTimeout(`${API_BASE}/api/cows`, {}, 45000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (data.success && data.cows && data.cows.length > 0) {
-        setCows(data.cows);
+      const cowList = Array.isArray(data) ? data : (data.cows || []);
+      if (cowList.length > 0) {
+        setCows(cowList);
         try {
-          localStorage.setItem('cached_cows', JSON.stringify(data.cows));
+          localStorage.setItem('cached_cows', JSON.stringify(cowList));
         } catch (_) {}
         setCurrentCowId(prev => {
           if (!prev) {
-            const activeCow = data.cows.find(c => !c.isStale && ((c.monitoredHoursToday || 0) > 0 || (c.ruminationHoursToday || 0) > 0));
-            return activeCow ? activeCow.id : data.cows[0].id;
+            const activeCow = cowList.find(c => !c.isStale && ((c.monitoredHoursToday || 0) > 0 || (c.ruminationHoursToday || 0) > 0));
+            return activeCow ? activeCow.id : cowList[0].id;
           }
           return prev;
         });

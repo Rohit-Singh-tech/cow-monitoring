@@ -632,11 +632,12 @@ class AwsTelemetryService:
     @classmethod
     def clear_all_telemetry_cache(cls):
         """Forces immediate wipe of telemetry caches and snapshots for fresh calculation."""
-        global _AWS_CACHE, _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _HERD_ITEMS_CACHE, _TAG_AWS_CACHE
+        global _AWS_CACHE, _LAST_VALID_DASHBOARD, _LAST_VALID_7DAY, _LAST_VALID_LOGS, _HERD_ITEMS_CACHE, _TAG_AWS_CACHE, _AWS_DAILY_SUMMARIES
         _AWS_CACHE.clear()
         _LAST_VALID_DASHBOARD.clear()
         _LAST_VALID_7DAY.clear()
         _LAST_VALID_LOGS.clear()
+        _AWS_DAILY_SUMMARIES.clear()
         _HERD_ITEMS_CACHE = {"expires_at": 0.0, "data": []}
         _TAG_AWS_CACHE = {"expires_at": 0.0, "data": set()}
         if os.path.exists(SNAPSHOT_FILE):
@@ -644,7 +645,7 @@ class AwsTelemetryService:
                 os.remove(SNAPSHOT_FILE)
             except Exception:
                 pass
-        logger.info("Cleared all AWS telemetry caches and removed snapshot file.")
+        logger.info("Cleared all AWS telemetry caches, daily summaries, and removed snapshot file.")
 
     @classmethod
     def get_known_device_ids(cls) -> List[str]:
@@ -1098,10 +1099,26 @@ class AwsTelemetryService:
 
         # Calculate time span of actual observations throughout the day
         if last_epoch >= first_epoch and first_epoch > 0:
-            span_hrs = (last_epoch - first_epoch + AWS_PACKET_INTERVAL_SECONDS) / 3600.0
-            packet_hrs = (tot * AWS_PACKET_INTERVAL_SECONDS) / 3600.0
-            # If packets arrive with varying interval, the actual time cannot exceed the observation window span
-            mon_hrs = min(day_cap, min(span_hrs, packet_hrs) if tot > 1 else packet_hrs)
+            # Check for large offline gaps (> 30 minutes)
+            total_offline_secs = 0.0
+            if tot > 1:
+                for i in range(1, tot):
+                    prev_ep = pkts[i-1].get("epoch") or (pkts[i-1]["timestamp"].timestamp() if pkts[i-1].get("timestamp") else 0)
+                    curr_ep = pkts[i].get("epoch") or (pkts[i]["timestamp"].timestamp() if pkts[i].get("timestamp") else 0)
+                    gap = curr_ep - prev_ep
+                    if gap > 1800:  # > 30 mins indicates collar was offline / disconnected
+                        total_offline_secs += (gap - 180)
+
+            active_secs = max(0.0, (last_epoch - first_epoch) - total_offline_secs)
+            span_hrs = (active_secs + AWS_PACKET_INTERVAL_SECONDS) / 3600.0
+
+            if tot >= 10:
+                # Device is periodically transmitting samples across the observation window
+                mon_hrs = min(day_cap, span_hrs)
+            else:
+                # Sparse packets: credit packet count or span, whichever is bounded
+                packet_hrs = (tot * AWS_PACKET_INTERVAL_SECONDS) / 3600.0
+                mon_hrs = min(day_cap, max(span_hrs, packet_hrs))
         else:
             packet_hrs = (tot * AWS_PACKET_INTERVAL_SECONDS) / 3600.0
             mon_hrs = min(day_cap, packet_hrs)
