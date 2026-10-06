@@ -35,13 +35,16 @@ class Settings(BaseSettings):
         "https://a03ztkg2f5.execute-api.us-east-1.amazonaws.com/default/CowNeck_API_Function?type=cow01"
     )
     AWS_COWNECK_API_TYPE: str = os.getenv("AWS_COWNECK_API_TYPE", "cow01")
-    AWS_ENABLED_DEVICE_IDS: Union[List[str], str] = ["11", "12", "13", "14", "15"]
+    # Optional seed device IDs (devices are dynamically auto-discovered and tracked)
+    AWS_ENABLED_DEVICE_IDS: Union[List[str], str] = []
     AWS_DISCOVERY_SCAN_MAX: int = int(os.getenv("AWS_DISCOVERY_SCAN_MAX", "100"))
     AWS_AUTO_DISCOVERY_INTERVAL_MINUTES: int = int(os.getenv("AWS_AUTO_DISCOVERY_INTERVAL_MINUTES", "10"))
 
     @field_validator("AWS_ENABLED_DEVICE_IDS", mode="before")
     @classmethod
     def parse_device_ids(cls, v):
+        if not v:
+            return []
         if isinstance(v, str):
             if v.startswith("["):
                 try:
