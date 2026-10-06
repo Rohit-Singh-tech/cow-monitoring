@@ -16,6 +16,8 @@ from app.services.aws_service import AwsTelemetryService
 
 logger = logging.getLogger("cow_logger.cows")
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 router = APIRouter()
 
 def is_explicit_aws_id(cow_id: str) -> bool:
@@ -171,10 +173,10 @@ def _build_health_status_from_inference(inference, summary=None):
     Build consistent health status from ML inference.
     Used by BOTH herd overview and live dashboard for consistency.
     """
-    if inference is None:
+    if inference is None or summary is None or ((summary.monitored_hours or 0.0) == 0.0 and (summary.total_packets or 0) == 0):
         return {
             "act_code": None,
-            "health_risk": None,
+            "health_risk": "NO_DATA",
             "is_heat": False,
             "heat_prob_pct": 0,
         }
@@ -247,7 +249,7 @@ def get_herd_overview(db: Session = Depends(get_db)):
             db_cows = cows
 
             if db_cows:
-                today = date.today()
+                today = datetime.now(IST).date()
                 all_summaries = db.query(DailyCowSummary).filter(
                     DailyCowSummary.date == today,
                     ~DailyCowSummary.device_id.ilike("aws-%")
@@ -290,7 +292,9 @@ def get_herd_overview(db: Session = Depends(get_db)):
                     is_heat = inf["is_heat"] if inf else False
                     heat_prob_pct = int((inf["heat_prob"] or 0) * 100) if inf and inf["heat_prob"] else 0
                     
-                    if stale:
+                    has_data_today = (summary is not None) and ((summary.monitored_hours or 0.0) > 0.0 or (summary.total_packets or 0) > 0) and (not stale)
+                    
+                    if not has_data_today:
                         rum_hrs = 0.0
                         lying_hrs = 0.0
                         feed_hrs = 0.0
@@ -298,11 +302,13 @@ def get_herd_overview(db: Session = Depends(get_db)):
                         act_code = None
                         health_risk = "NO_DATA"
                         heat_prob_pct = 0
+                        monitored_hrs = 0.0
                     else:
-                        rum_hrs = summary.rumination_hours if summary else 0.0
-                        lying_hrs = summary.lying_hours if summary else 0.0
-                        feed_hrs = summary.feeding_hours if summary else 0.0
-                        move_hrs = summary.moving_hours if summary else 0.0
+                        rum_hrs = summary.rumination_hours or 0.0
+                        lying_hrs = summary.lying_hours or 0.0
+                        feed_hrs = summary.feeding_hours or 0.0
+                        move_hrs = summary.moving_hours or 0.0
+                        monitored_hrs = summary.monitored_hours or 0.0
 
                     act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
 
@@ -325,8 +331,8 @@ def get_herd_overview(db: Session = Depends(get_db)):
                         "movingHoursToday": move_hrs,
                         "estrusProbability": heat_prob_pct,
                         "lastSeen": ts.isoformat() if ts else None,
-                        "isStale": stale,
-                        "monitoredHoursToday": summary.monitored_hours if summary else 0.0
+                        "isStale": not has_data_today,
+                        "monitoredHoursToday": monitored_hrs
                     })
                 _DB_HERD_CACHE = {"expires_at": now_ts + 120.0, "data": db_items}
         except Exception as e:
@@ -347,29 +353,29 @@ def get_herd_overview(db: Session = Depends(get_db)):
     
     active_7day_cows = []
     for cow in result:
-        mon_hours = cow.get("monitoredHoursToday", 0.0) or 0.0
-        rum_hours = cow.get("ruminationHoursToday", 0.0) or 0.0
-        last_seen = cow.get("lastSeen")
-        
-        has_7day_data = False
-        if mon_hours > 0 or rum_hours > 0:
-            has_7day_data = True
-        elif last_seen:
-            try:
-                dt_seen = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
-                if dt_seen.tzinfo is None:
-                    dt_seen = dt_seen.replace(tzinfo=timezone.utc)
-                if dt_seen >= seven_days_ago:
-                    has_7day_data = True
-            except Exception:
-                pass
-                
-        # For AWS devices, also consult AwsTelemetryService.device_has_7day_data
-        if not has_7day_data and (cow.get("source") == "aws_api" or str(cow.get("id")).startswith("aws-")):
-            has_7day_data = AwsTelemetryService.device_has_7day_data(cow.get("device_id"))
-
-        if has_7day_data:
-            active_7day_cows.append(cow)
+        is_aws = (cow.get("source") == "aws_api" or str(cow.get("id")).startswith("aws-"))
+        if is_aws:
+            # Strictly verify through AwsTelemetryService.device_has_7day_data
+            if AwsTelemetryService.device_has_7day_data(cow.get("device_id")):
+                active_7day_cows.append(cow)
+        else:
+            mon_hours = cow.get("monitoredHoursToday", 0.0) or 0.0
+            rum_hours = cow.get("ruminationHoursToday", 0.0) or 0.0
+            last_seen = cow.get("lastSeen")
+            has_7day_data = False
+            if mon_hours > 0 or rum_hours > 0:
+                has_7day_data = True
+            elif last_seen:
+                try:
+                    dt_seen = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+                    if dt_seen.tzinfo is None:
+                        dt_seen = dt_seen.replace(tzinfo=timezone.utc)
+                    if dt_seen >= seven_days_ago:
+                        has_7day_data = True
+                except Exception:
+                    pass
+            if has_7day_data:
+                active_7day_cows.append(cow)
 
     # Prioritize active / live transmitting nodes at the top of the herd
     active_7day_cows.sort(key=lambda c: (
@@ -458,7 +464,7 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     if cache_entry and cache_entry["expires_at"] > now_ts:
         return cache_entry["data"]
 
-    today = date.today()
+    today = datetime.now(IST).date()
 
     # Get today's pre-computed daily summary
     summary = db.query(DailyCowSummary).filter(
@@ -523,8 +529,9 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
     # Build consistent health status — SAME logic as herd overview
     health = _build_health_status_from_inference(inference, summary)
     
-    if stale:
-        # Device hasn't sent data in 24 hours
+    has_data_today = (summary is not None) and ((summary.monitored_hours or 0.0) > 0.0 or (summary.total_packets or 0) > 0) and (not stale)
+    
+    if not has_data_today:
         monitored_hours = 0.0
         rum_hrs = 0.0
         lying_hrs = 0.0
@@ -536,11 +543,11 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         act_code = None
         act_info = ACTIVITY_MAP.get("RES")
     else:
-        monitored_hours = summary.monitored_hours if summary else 0.0
-        rum_hrs = summary.rumination_hours if summary else 0.0
-        lying_hrs = summary.lying_hours if summary else 0.0
-        feed_hrs = summary.feeding_hours if summary else 0.0
-        move_hrs = summary.moving_hours if summary else 0.0
+        monitored_hours = summary.monitored_hours or 0.0
+        rum_hrs = summary.rumination_hours or 0.0
+        lying_hrs = summary.lying_hours or 0.0
+        feed_hrs = summary.feeding_hours or 0.0
+        move_hrs = summary.moving_hours or 0.0
         health_risk = health["health_risk"]
         is_heat = health["is_heat"]
         heat_prob_pct = health["heat_prob_pct"]
@@ -548,27 +555,27 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         act_info = ACTIVITY_MAP.get(act_code, ACTIVITY_MAP.get("RES")) if act_code else ACTIVITY_MAP.get("RES")
 
     # If we still don't have ml_res, build a default
-    if ml_res is None:
+    if ml_res is None or not has_data_today:
         ml_res = {
             "ml_engine_status": "NO_DATA",
-            "activity": {"code": act_code, "confidence": 0.0, "primary_activity": act_code},
+            "activity": {"code": None, "confidence": 0.0, "primary_activity": None},
             "heat_detection": {"in_heat": False, "heat_probability": 0.0, "alert_level": "LOW"},
             "anomaly_detection": {"is_anomaly": False, "score": 0.0},
             "deviation_metrics": {"is_deviating": False},
-            "health_risk_decision": health_risk
+            "health_risk_decision": "NO_DATA"
         }
         if not x_buf:
             x_buf, y_buf, z_buf = [0]*80, [0]*80, [0]*80
 
-    # Use health_risk from ML result if available and not stale
-    if not stale and ml_res.get("health_risk_decision"):
+    # Use health_risk from ML result only if device actually has active data today
+    if has_data_today and ml_res.get("health_risk_decision"):
         health_risk = ml_res["health_risk_decision"]
         # Re-apply heat override for consistency
         if is_heat and health_risk == "HEALTHY":
             health_risk = "HIGH_RISK"
 
     # Generate data-driven recommendation
-    recommendation = _generate_recommendation(health_risk, is_heat, ml_res, stale)
+    recommendation = _generate_recommendation(health_risk, is_heat, ml_res, not has_data_today)
 
     mag_buf = [round(math.sqrt(x_buf[i]**2 + y_buf[i]**2 + z_buf[i]**2), 3) for i in range(len(x_buf))]
     labels = [f"{(i*0.1):.1f}s" for i in range(len(x_buf))]
@@ -583,10 +590,10 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
         "location": cow.location or None,
         "weight": f"{cow.weight} kg" if cow.weight else None,
         "notes": cow.notes,
-        "isStale": stale,
+        "isStale": not has_data_today,
         "currentActivity": {
             "code": act_code,
-            "name": act_info["name"] if act_code else "No Recent Data",
+            "name": act_info["name"] if (act_code and has_data_today) else "No Recent Data",
             "color": act_info["color"],
             "icon": act_info["icon"]
         },
@@ -631,11 +638,8 @@ def get_cow_live_dashboard(cow_id: str, target_date: Optional[str] = None, db: S
 
 def _generate_recommendation(health_risk, is_heat, ml_res, stale):
     """Generate recommendation text based purely on ML data — nothing hardcoded."""
-    if stale:
-        return "WARNING: No sensor data received in the last 24 hours. Check collar node battery and BLE connectivity."
-    
-    if health_risk == "NO_DATA":
-        return "Awaiting ML inference results. Sensor data is being processed by the background worker."
+    if stale or health_risk == "NO_DATA":
+        return "No sensor telemetry received today for this collar node. Metrics and diagnostics will activate when fresh data arrives."
     
     if health_risk == "HIGH_RISK":
         issues = []
@@ -703,7 +707,7 @@ def get_cow_7day_activity(cow_id: str, db: Session = Depends(get_db)):
         return cached_7day["data"]
 
     # Calculate last 7 dates
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(IST).date()
     date_range = [(today - timedelta(days=i)) for i in range(6, -1, -1)]
 
     # Get last 7 days of pre-computed summaries

@@ -27,29 +27,18 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
 };
 
 const DEFAULT_PRELOAD_COWS = [
-  { id: "aws-13", device_id: "13", source: "aws_api", tagNumber: "AWS 13", name: "AWS 13", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 14.0, monitoredHoursToday: 14.0, isStale: false },
-  { id: "aws-12", device_id: "12", source: "aws_api", tagNumber: "AWS 12", name: "AWS 12", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 4.32, monitoredHoursToday: 4.33, isStale: false },
-  { id: "aws-11", device_id: "11", source: "aws_api", tagNumber: "AWS 11", name: "AWS 11", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 4.27, monitoredHoursToday: 4.27, isStale: false },
-  { id: "aws-15", device_id: "15", source: "aws_api", tagNumber: "AWS 15", name: "AWS 15", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 4.05, monitoredHoursToday: 4.05, isStale: false },
-  { id: "aws-14", device_id: "14", source: "aws_api", tagNumber: "AWS 14", name: "AWS 14", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating", ruminationHoursToday: 2.8, monitoredHoursToday: 2.8, isStale: false },
-  { id: "19", device_id: "19", source: "gatewayless", tagNumber: "TAG-19", name: "Cow9", breed: "Jersey", location: "Mohali", weight: "525 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.71, monitoredHoursToday: 1.71, isStale: false },
-  { id: "17", device_id: "17", source: "gatewayless", tagNumber: "TAG-17", name: "Cow7", breed: "Sahiwal", location: "Rupnagar", weight: "300 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.67, monitoredHoursToday: 1.67, isStale: false },
-  { id: "13", device_id: "13", source: "gatewayless", tagNumber: "TAG-13", name: "Cow3", breed: "Holstein-Friesian", location: "Rupnagar", weight: "420 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.66, monitoredHoursToday: 1.67, isStale: false },
-  { id: "14", device_id: "14", source: "gatewayless", tagNumber: "TAG-14", name: "Cow4", breed: "Rathi", location: "Rupnagar", weight: "390 kg", healthStatus: "HIGH_RISK", health_risk_decision: "HIGH_RISK", currentActivity: "RUS", activityName: "Ruminating in standing position", ruminationHoursToday: 1.31, monitoredHoursToday: 1.31, isStale: false }
+  { id: "aws-13", device_id: "13", source: "aws_api", tagNumber: "AWS 13", name: "AWS 13", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "Connecting...", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: false },
+  { id: "aws-12", device_id: "12", source: "aws_api", tagNumber: "AWS 12", name: "AWS 12", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "Connecting...", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: false },
+  { id: "aws-11", device_id: "11", source: "aws_api", tagNumber: "AWS 11", name: "AWS 11", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "Connecting...", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: false },
+  { id: "aws-15", device_id: "15", source: "aws_api", tagNumber: "AWS 15", name: "AWS 15", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "Connecting...", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: false },
+  { id: "aws-14", device_id: "14", source: "aws_api", tagNumber: "AWS 14", name: "AWS 14", breed: "Collar Node", location: "Paddock AWS", weight: "480 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "Connecting...", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: false },
+  { id: "19", device_id: "19", source: "gatewayless", tagNumber: "TAG-19", name: "Cow9", breed: "Jersey", location: "Mohali", weight: "525 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "No Data Today", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: true },
+  { id: "17", device_id: "17", source: "gatewayless", tagNumber: "TAG-17", name: "Cow7", breed: "Sahiwal", location: "Rupnagar", weight: "300 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "No Data Today", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: true },
+  { id: "13", device_id: "13", source: "gatewayless", tagNumber: "TAG-13", name: "Cow3", breed: "Holstein-Friesian", location: "Rupnagar", weight: "420 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "No Data Today", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: true },
+  { id: "14", device_id: "14", source: "gatewayless", tagNumber: "TAG-14", name: "Cow4", breed: "Rathi", location: "Rupnagar", weight: "390 kg", healthStatus: "NO_DATA", health_risk_decision: "NO_DATA", currentActivity: "NO_DATA", activityName: "No Data Today", ruminationHoursToday: 0.0, monitoredHoursToday: 0.0, isStale: true }
 ];
 
-const DEFAULT_PRELOAD_CURRENT = {
-  success: true,
-  cowId: "aws-13",
-  device_id: "13",
-  tagNumber: "AWS 13",
-  status: "HIGH_RISK",
-  health_risk_decision: "HIGH_RISK",
-  currentActivity: { code: "RUS", name: "Ruminating", durationMinutes: 120, confidencePercent: 88, color: "#06b6d4" },
-  healthStatus: { health_risk_decision: "HIGH_RISK", status: "HIGH_RISK", monitoredHoursToday: 14.0, ruminationHoursToday: 14.0, lyingHoursToday: 0.0, feedingHoursToday: 0.0, movingHoursToday: 0.0, estrusProbabilityPercent: 56, isHeatDetected: false },
-  lastPacketTime: new Date().toISOString(),
-  batteryLevel: 94
-};
+const DEFAULT_PRELOAD_CURRENT = null;
 
 const getInitialCachedCows = () => {
   try {
@@ -104,8 +93,23 @@ export default function App() {
   // Helper to sync single cow update into cows array
   const syncCowIntoList = (cowData) => {
     if (!cowData) return;
+    const targetId = String(cowData.cowId || cowData.id || '').trim();
+    const targetSource = cowData.source ? String(cowData.source).toLowerCase() : '';
+    const targetDevId = String(cowData.device_id || '').trim();
+    const isAwsTarget = targetSource.includes('aws') || targetId.startsWith('aws-');
+
     setCows(prevCows => prevCows.map(c => {
-      if (String(c.id) === String(cowData.cowId || cowData.id) || String(c.device_id) === String(cowData.device_id)) {
+      const cId = String(c.id || '').trim();
+      const cSource = c.source ? String(c.source).toLowerCase() : '';
+      const cDevId = String(c.device_id || '').trim();
+      const isAwsC = cSource.includes('aws') || cId.startsWith('aws-');
+
+      // Prevent cross-domain pollution: AWS devices must never match DB devices
+      const sameDomain = (isAwsTarget === isAwsC);
+      const matchesId = targetId && cId === targetId;
+      const matchesDevice = sameDomain && targetDevId && cDevId && (targetDevId === cDevId);
+
+      if (matchesId || matchesDevice) {
         const health = cowData.healthStatus || {};
         const act = cowData.currentActivity || {};
         const risk = health.health_risk_decision || c.health_risk_decision || 'HEALTHY';
@@ -115,6 +119,7 @@ export default function App() {
           health_risk_decision: risk,
           healthStatus: (health.isHeatDetected || risk === 'HIGH_RISK') ? 'HIGH_RISK' : risk,
           ruminationHoursToday: health.ruminationHoursToday !== undefined ? health.ruminationHoursToday : c.ruminationHoursToday,
+          monitoredHoursToday: health.monitoredHoursToday !== undefined ? health.monitoredHoursToday : c.monitoredHoursToday,
           lyingHoursToday: health.lyingHoursToday !== undefined ? health.lyingHoursToday : c.lyingHoursToday,
           feedingHoursToday: health.feedingHoursToday !== undefined ? health.feedingHoursToday : c.feedingHoursToday,
           movingHoursToday: health.movingHoursToday !== undefined ? health.movingHoursToday : c.movingHoursToday,

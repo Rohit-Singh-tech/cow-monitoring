@@ -299,30 +299,31 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
   // Filter Logs (now pre-grouped by backend)
   const activeLogs = logs || [];
 
-  const isWithin24HoursOrToday = (isoStr) => {
+  // Filter Logs strictly for today's calendar date (no rolling 24-hour spillover from yesterday)
+  const isTodayOnly = (isoStr) => {
     if (!isoStr) return false;
     try {
       const logDate = new Date(isoStr);
+      if (isNaN(logDate.getTime())) return false;
       const now = new Date();
-      const diffMs = now.getTime() - logDate.getTime();
-      const within24H = diffMs >= 0 && diffMs <= (24 * 3600 * 1000);
-      const sameDay = (
+      return (
         logDate.getFullYear() === now.getFullYear() &&
         logDate.getMonth() === now.getMonth() &&
         logDate.getDate() === now.getDate()
       );
-      return within24H || sameDay;
     } catch {
       return false;
     }
   };
 
-  const todayLogsCount = activeLogs.filter(log => isWithin24HoursOrToday(log.startTime)).length;
+  const todayLogsCount = activeLogs.filter(log => isTodayOnly(log.startTime)).length;
   const totalLogsCount = activeLogs.length;
 
+  const isTodayScope = dateScope === '24H' || dateScope === 'TODAY';
+
   const scopeFilteredLogs = activeLogs.filter(log => {
-    if (dateScope === '24H') {
-      return isWithin24HoursOrToday(log.startTime);
+    if (isTodayScope) {
+      return isTodayOnly(log.startTime);
     }
     return true;
   });
@@ -425,14 +426,14 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
         <div className="card-header-box" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
           <div className="card-title">
             <i className="fa-solid fa-clock-rotate-left" style={{ color: 'var(--accent-amber)' }}></i>
-            {dateScope === '24H' ? `TODAY'S 24-HOUR ACTIVITY TRANSITION LOGS (${todayLogsCount})` : `7-DAY ACTIVITY TRANSITION LOGS (${totalLogsCount})`}
+            {isTodayScope ? `TODAY'S ACTIVITY TRANSITION LOGS (${todayLogsCount})` : `7-DAY ACTIVITY TRANSITION LOGS (${totalLogsCount})`}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
             <div className="tab-pill-group" style={{ display: 'inline-flex', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-xs)', border: '1px solid var(--border-subtle)', padding: '2px' }}>
               <button
                 type="button"
-                className={`tab-pill-btn ${dateScope === '24H' ? 'active' : ''}`}
+                className={`tab-pill-btn ${isTodayScope ? 'active' : ''}`}
                 style={{
                   padding: '4px 10px',
                   fontSize: '0.75rem',
@@ -440,8 +441,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
                   border: 'none',
                   borderRadius: '4px',
                   cursor: 'pointer',
-                  background: dateScope === '24H' ? 'var(--accent-emerald)' : 'transparent',
-                  color: dateScope === '24H' ? '#FFFFFF' : 'var(--text-muted)'
+                  background: isTodayScope ? 'var(--accent-emerald)' : 'transparent',
+                  color: isTodayScope ? '#FFFFFF' : 'var(--text-muted)'
                 }}
                 onClick={() => setDateScope('24H')}
               >
@@ -449,7 +450,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
               </button>
               <button
                 type="button"
-                className={`tab-pill-btn ${dateScope === 'ALL' ? 'active' : ''}`}
+                className={`tab-pill-btn ${!isTodayScope ? 'active' : ''}`}
                 style={{
                   padding: '4px 10px',
                   fontSize: '0.75rem',
@@ -457,8 +458,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
                   border: 'none',
                   borderRadius: '4px',
                   cursor: 'pointer',
-                  background: dateScope === 'ALL' ? 'var(--accent-emerald)' : 'transparent',
-                  color: dateScope === 'ALL' ? '#FFFFFF' : 'var(--text-muted)'
+                  background: !isTodayScope ? 'var(--accent-emerald)' : 'transparent',
+                  color: !isTodayScope ? '#FFFFFF' : 'var(--text-muted)'
                 }}
                 onClick={() => setDateScope('ALL')}
               >
@@ -550,8 +551,8 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
                 ) : (
                   <tr>
                     <td colSpan="9" style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                      {dateScope === '24H'
-                        ? "No activity logs recorded in the last 24 hours. Switch to 'All 7 Days' above to view weekly logs."
+                      {isTodayScope
+                        ? "No activity logs recorded for today. Switch to 'All 7 Days' above to view historical logs."
                         : "No activity logs recorded in the last 7 days for this node."}
                     </td>
                   </tr>
@@ -610,7 +611,7 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
               ))
             ) : (
               <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)' }}>
-                {dateScope === '24H'
+                {isTodayScope
                   ? "No activity logs recorded for today. Switch to 'All 7 Days' above to view historical logs."
                   : "No activity logs match your search or filter."}
               </div>

@@ -246,8 +246,8 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
               {currentData.breed && currentData.breed !== 'CowNeck Collar Cow' && (
                 <span className="meta-chip"><i className="fa-solid fa-dna" style={{ marginRight: '0.35rem', color: 'var(--accent-purple)' }}></i>{currentData.breed}</span>
               )}
-              <span className={`health-badge ${isStale ? 'NO_DATA' : healthDecision}`}>
-                {isStale ? 'NO DATA' : String(healthDecision).replace('_', ' ')}
+              <span className={`health-badge ${(isStale || (health.monitoredHoursToday || 0) === 0 || healthDecision === 'NO_DATA') ? 'NO_DATA' : healthDecision}`}>
+                {(isStale || (health.monitoredHoursToday || 0) === 0 || healthDecision === 'NO_DATA') ? 'NO DATA' : String(healthDecision).replace('_', ' ')}
               </span>
             </div>
           </div>
@@ -255,17 +255,17 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         <div className="current-activity-box">
           <div className="activity-label-sm">CURRENT BEHAVIOUR STATE</div>
           <div className="activity-badge-hero">
-            <i className={`fa-solid ${act.icon || 'fa-question'}`} style={{ color: act.color }}></i> {act.name || (isStale ? 'No Recent Data' : 'Unknown')}
+            <i className={`fa-solid ${act.icon || 'fa-question'}`} style={{ color: act.color }}></i> {act.name || ((isStale || (health.monitoredHoursToday || 0) === 0) ? 'No Recent Data' : 'Unknown')}
           </div>
           <div className="activity-duration-tag">
             <i className="fa-solid fa-brain" style={{ color: 'var(--accent-emerald)', marginRight: '0.25rem' }}></i>
-            CONFIDENCE: <strong style={{ color: 'var(--text-primary)' }}>{isStale ? '0.0' : Number(confidence).toFixed(1)}%</strong>
+            CONFIDENCE: <strong style={{ color: 'var(--text-primary)' }}>{(isStale || (health.monitoredHoursToday || 0) === 0) ? '0.0' : Number(confidence).toFixed(1)}%</strong>
           </div>
         </div>
       </div>
 
-      {/* Critical Health Warning Alert Banner */}
-      {isHighRisk && (
+      {/* Critical Health Warning Alert Banner - only if active data today */}
+      {isHighRisk && !isStale && (health.monitoredHoursToday || 0) > 0 && healthDecision !== 'NO_DATA' && (
         <div className="alert-banner danger">
           <div className="alert-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
           <div className="alert-content">
@@ -277,7 +277,7 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         </div>
       )}
 
-      {!isHighRisk && !isStale && healthDecision === 'MONITOR' && (
+      {!isHighRisk && !isStale && (health.monitoredHoursToday || 0) > 0 && healthDecision === 'MONITOR' && (
         <div className="alert-banner warning">
           <div className="alert-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
           <div className="alert-content">
@@ -287,12 +287,12 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
         </div>
       )}
       
-      {isStale && (
+      {(isStale || (health.monitoredHoursToday || 0) === 0 || healthDecision === 'NO_DATA') && (
         <div className="alert-banner" style={{ background: 'rgba(100, 116, 139, 0.15)', border: '1px solid rgba(100, 116, 139, 0.3)', color: 'var(--text-primary)' }}>
           <div className="alert-icon" style={{ color: '#64748b' }}><i className="fa-solid fa-clock"></i></div>
           <div className="alert-content">
             <h4>NO TELEMETRY RECORDED TODAY</h4>
-            <p>{health.healthRecommendation || 'No sensor telemetry received today for this collar node. Metrics and diagnostics will activate when fresh data arrives.'}</p>
+            <p>{(health.monitoredHoursToday || 0) === 0 ? 'No sensor telemetry received today for this collar node. Metrics and diagnostics will activate when fresh data arrives.' : (health.healthRecommendation || 'No sensor telemetry received today for this collar node. Metrics and diagnostics will activate when fresh data arrives.')}</p>
           </div>
         </div>
       )}

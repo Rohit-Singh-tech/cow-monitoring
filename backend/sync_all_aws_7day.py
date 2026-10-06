@@ -11,7 +11,13 @@ from datetime import datetime, date, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app.services.aws_service import AwsTelemetryService, _parse_timestamp, AWS_PACKET_INTERVAL_SECONDS, _save_snapshot
+from app.services.aws_service import (
+    AwsTelemetryService,
+    _parse_timestamp,
+    AWS_PACKET_INTERVAL_SECONDS,
+    _save_snapshot,
+    IST
+)
 from app.ml.model_loader import get_ml_manager
 from app.database import SessionLocal
 from app.models.datalogger import DailyCowSummary, SystemCache
@@ -21,8 +27,8 @@ def main():
     mgr = get_ml_manager()
     print(f"ML Manager loaded: {mgr.is_loaded}", flush=True)
 
-    # Dynamic date range: current rolling 7 days up to today (UTC)
-    today = datetime.now(timezone.utc).date()
+    # Dynamic date range: current rolling 7 days up to today in Indian Standard Time (IST)
+    today = datetime.now(IST).date()
     date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
 
     # Dynamic device list: from CLI arguments if specified, else dynamically discovered
@@ -79,6 +85,7 @@ def main():
                             moving_hours=0.0,
                             heat_count=0
                         ))
+                        db.commit()
                     AwsTelemetryService._update_daily_summary_from_packets(dev_id, d, [])
                     continue
 
@@ -102,21 +109,15 @@ def main():
                     })
 
                 proc_dt = time.time() - t0
-                first_epoch = processed[0]["epoch"]
-                last_epoch = processed[-1]["epoch"]
-                span_hrs = (last_epoch - first_epoch) / 3600.0 if last_epoch > first_epoch else (tot * 45) / 3600.0
-                mon_hrs = min(24.0, round(max(span_hrs, (tot * 45) / 3600.0), 2))
-
-                c_rus = sum(1 for p in processed if p.get("ml_inference", {}).get("activity", {}).get("code") == "RUS")
-                c_rel = sum(1 for p in processed if p.get("ml_inference", {}).get("activity", {}).get("code") == "REL")
-                c_fep = sum(1 for p in processed if p.get("ml_inference", {}).get("activity", {}).get("code") in ["FEP", "FED", "GRZ"])
-                c_mov = sum(1 for p in processed if p.get("ml_inference", {}).get("activity", {}).get("code") == "MOV")
-                c_heat = sum(1 for p in processed if p.get("ml_inference", {}).get("heat_detection", {}).get("in_heat"))
-
-                r_hrs = min(mon_hrs, round((c_rus / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-                l_hrs = min(mon_hrs, round((c_rel / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-                f_hrs = min(mon_hrs, round((c_fep / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-                m_hrs = min(mon_hrs, round((c_mov / tot) * mon_hrs, 2)) if tot > 0 else 0.0
+                # Use unified calculation from AwsTelemetryService
+                metrics = AwsTelemetryService._calculate_day_metrics(processed)
+                mon_hrs = metrics["monitored_hours"]
+                r_hrs = metrics["rum_hours"]
+                l_hrs = metrics["lying_hours"]
+                f_hrs = metrics["feed_hours"]
+                m_hrs = metrics["move_hours"]
+                c_heat = metrics["heat_count"]
+                tot_pkts = metrics["total_packets"]
 
                 # Update in-memory summary
                 AwsTelemetryService._update_daily_summary_from_packets(dev_id, d, processed)
@@ -131,7 +132,7 @@ def main():
                     db.add(DailyCowSummary(
                         device_id=aws_db_id,
                         date=d,
-                        total_packets=tot,
+                        total_packets=tot_pkts,
                         monitored_hours=mon_hrs,
                         rumination_hours=r_hrs,
                         lying_hours=l_hrs,
@@ -140,7 +141,7 @@ def main():
                         heat_count=c_heat
                     ))
                 else:
-                    existing.total_packets = tot
+                    existing.total_packets = tot_pkts
                     existing.monitored_hours = mon_hrs
                     existing.rumination_hours = r_hrs
                     existing.lying_hours = l_hrs
@@ -150,14 +151,15 @@ def main():
 
                 db.commit()
                 total_synced += 1
-                print(f"  [{d_str}] {tot} pkts -> Monitored: {mon_hrs}h, Rum: {r_hrs}h, Lying: {l_hrs}h, Move: {m_hrs}h ({proc_dt:.1f}s)", flush=True)
+                print(f"  [{d_str}] {tot_pkts} pkts -> Monitored: {mon_hrs}h, Rum: {r_hrs}h, Lying: {l_hrs}h, Feed: {f_hrs}h, Move: {m_hrs}h ({proc_dt:.1f}s)", flush=True)
 
         print(f"\nSuccessfully synced {total_synced} daily summaries to PostgreSQL!", flush=True)
 
-        # Re-compute 7-day breakdown and transition logs for all 5 devices and save snapshot
-        print("\nRe-computing 7-day dashboards and transition logs...", flush=True)
+        # Re-compute 7-day breakdown and transition logs for all active devices and save snapshot
+        print("\nRe-computing 7-day dashboards, live diagnostics, and transition logs...", flush=True)
         for dev_id in devices:
             res_7d = AwsTelemetryService._refresh_7day_and_logs(dev_id)
+            AwsTelemetryService._compute_live_dashboard(dev_id)
             logs = AwsTelemetryService.get_activity_logs(dev_id, page=1, limit=250)
             print(f"  Dev {dev_id}: 7-day monitored={res_7d.get('monitoredHours')}, logs={len(logs.get('logs', []))}", flush=True)
 

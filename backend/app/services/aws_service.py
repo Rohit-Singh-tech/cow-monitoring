@@ -38,6 +38,9 @@ ACTIVITY_MAP = {
 
 import os
 
+# Standard Indian Standard Time (UTC+5:30) for AWS CowNeck collars and farm operations
+IST = timezone(timedelta(hours=5, minutes=30))
+
 # AWS CowNeck Collar transmits 1 telemetry packet per 60 seconds (1 minute).
 # 1 packet represents 60.0 seconds of livestock behavioral observation.
 AWS_PACKET_INTERVAL_SECONDS = 60.0
@@ -202,8 +205,8 @@ def _load_snapshot():
                     }
 
         # Validate 7-day data against current rolling 7-day window
-        today_utc = datetime.now(timezone.utc).date()
-        expected_dates = [(today_utc - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+        today_ist = datetime.now(IST).date()
+        expected_dates = [(today_ist - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
         for dev_id, s7 in old_7day.items():
             if s7.get("dates") == expected_dates:
                 # Check for 0.0 gaps that have data in _AWS_DAILY_SUMMARIES
@@ -234,7 +237,7 @@ def _load_snapshot():
             if last_seen:
                 try:
                     dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
-                    if dt.date() == today_utc:
+                    if dt.astimezone(IST).date() == today_ist:
                         is_today = True
                 except Exception:
                     pass
@@ -269,8 +272,8 @@ def _load_snapshot():
                     })
 
         # Pre-warm fast in-memory activity logs cache from snapshot within active 7-day window
-        cutoff_7d = (today_utc - timedelta(days=6)).strftime("%Y-%m-%d")
-        today_str = today_utc.strftime("%Y-%m-%d")
+        cutoff_7d = (today_ist - timedelta(days=6)).strftime("%Y-%m-%d")
+        today_str = today_ist.strftime("%Y-%m-%d")
         for dev_id, saved_logs_data in list(_LAST_VALID_LOGS.items()):
             l_list = saved_logs_data.get("logs", []) if isinstance(saved_logs_data, dict) else saved_logs_data
             if l_list:
@@ -279,8 +282,51 @@ def _load_snapshot():
                 if filtered_7d:
                     act_cache_key = f"actlogs_{dev_id}_{today_str}"
                     _AWS_CACHE[act_cache_key] = {"expires_at": time.time() + 30.0, "data": filtered_7d}
-            else:
-                _LAST_VALID_LOGS[dev_id] = []
+        # Strict sanitization: purge any phantom devices that have 0 verified packets and no aws- DB rows
+        verified_aws_ids = set()
+        try:
+            from app.database import SessionLocal
+            from app.models.datalogger import DailyCowSummary
+            with SessionLocal() as db:
+                rows = db.query(DailyCowSummary.device_id).filter(
+                    DailyCowSummary.device_id.ilike("aws-%"),
+                    ((DailyCowSummary.total_packets > 0) | (DailyCowSummary.monitored_hours > 0))
+                ).distinct().all()
+                for (r_id,) in rows:
+                    if r_id:
+                        verified_aws_ids.add(str(r_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip())
+        except Exception:
+            pass
+
+        for dev_k in list(_AWS_DAILY_SUMMARIES.keys()):
+            clean_k = str(dev_k).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+            if clean_k not in verified_aws_ids and clean_k not in _DISCOVERED_AWS_DEVICES:
+                _AWS_DAILY_SUMMARIES.pop(dev_k, None)
+
+        for dev_k in list(_LAST_VALID_DASHBOARD.keys()):
+            clean_k = str(dev_k).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+            if clean_k not in verified_aws_ids and clean_k not in _DISCOVERED_AWS_DEVICES:
+                _LAST_VALID_DASHBOARD.pop(dev_k, None)
+
+        for dev_k in list(_LAST_VALID_7DAY.keys()):
+            clean_k = str(dev_k).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+            if clean_k not in verified_aws_ids and clean_k not in _DISCOVERED_AWS_DEVICES:
+                _LAST_VALID_7DAY.pop(dev_k, None)
+
+        for dev_k in list(_LAST_VALID_LOGS.keys()):
+            clean_k = str(dev_k).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+            if clean_k not in verified_aws_ids and clean_k not in _DISCOVERED_AWS_DEVICES:
+                _LAST_VALID_LOGS.pop(dev_k, None)
+
+        for dev_k in list(_LAST_KNOWN_TELEMETRY.keys()):
+            clean_k = str(dev_k).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+            if clean_k not in verified_aws_ids and clean_k not in _DISCOVERED_AWS_DEVICES:
+                _LAST_KNOWN_TELEMETRY.pop(dev_k, None)
+
+        for dev_k in list(_DISCOVERED_AWS_DEVICES):
+            clean_k = str(dev_k).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+            if clean_k not in verified_aws_ids:
+                _DISCOVERED_AWS_DEVICES.discard(dev_k)
 
         logger.info(f"Loaded persistent AWS telemetry snapshot with {len(_AWS_DAILY_SUMMARIES)} daily summary devices.")
     except Exception as e:
@@ -387,7 +433,7 @@ class AwsTelemetryService:
         - Past days: 6s timeout, empty results cached 24h (no repeated timeouts).
         - Today: 10s timeout, results cached 5min.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(IST)
         
         # Target specific date for 24 hours (startdate=target&enddate=target)
         if start_date and not end_date:
@@ -642,8 +688,11 @@ class AwsTelemetryService:
                         elif tag_notes and "aws" in tag_notes.lower():
                             clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
                             tag_ids.add(clean)
-                    # Include devices with existing DailyCowSummary rows explicitly belonging to AWS
-                    daily_devs = db.query(DailyCowSummary.device_id).filter(DailyCowSummary.device_id.ilike("aws-%")).distinct().all()
+                    # Include devices with existing DailyCowSummary rows explicitly belonging to AWS with data
+                    daily_devs = db.query(DailyCowSummary.device_id).filter(
+                        DailyCowSummary.device_id.ilike("aws-%"),
+                        ((DailyCowSummary.total_packets > 0) | (DailyCowSummary.monitored_hours > 0))
+                    ).distinct().all()
                     for (d_id,) in daily_devs:
                         if d_id:
                             clean = str(d_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
@@ -653,7 +702,8 @@ class AwsTelemetryService:
             except Exception:
                 pass
 
-        return sorted(list(all_ids), key=_device_sort_key)
+        active_ids = [d for d in all_ids if cls.device_has_7day_data(d) or (d in _DISCOVERED_AWS_DEVICES)]
+        return sorted(list(active_ids), key=_device_sort_key)
 
     @classmethod
     def is_aws_device(cls, cow_id: str) -> bool:
@@ -663,7 +713,7 @@ class AwsTelemetryService:
         s = str(cow_id).strip()
         s_clean = s.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         if s.lower().startswith("aws-") or s.lower().startswith("aws ") or s.lower().startswith("aws#"):
-            return True
+            return cls.device_has_7day_data(s_clean) or (s_clean in _DISCOVERED_AWS_DEVICES)
         known = set(cls.get_known_device_ids())
         if s_clean in known:
             return True
@@ -686,8 +736,8 @@ class AwsTelemetryService:
             return True
 
         # Probe today, yesterday, and past days in the rolling 7-day window dynamically
-        now_dt = datetime.now(timezone.utc)
-        probe_dates = [(now_dt - timedelta(days=i)).strftime("%d-%m-%Y") for i in range(7)]
+        now_ist = datetime.now(IST)
+        probe_dates = [(now_ist - timedelta(days=i)).strftime("%d-%m-%Y") for i in range(7)]
         for d_str in probe_dates:
             try:
                 pkts = cls.fetch_aws_raw(clean_id, start_date=d_str, end_date=d_str)
@@ -720,9 +770,9 @@ class AwsTelemetryService:
 
         try:
             scan_limit = max_device_id or settings.AWS_DISCOVERY_SCAN_MAX
-            now = datetime.now(timezone.utc)
-            today_str = now.strftime("%d-%m-%Y")
-            yesterday_str = (now - timedelta(days=1)).strftime("%d-%m-%Y")
+            now_ist = datetime.now(IST)
+            today_str = now_ist.strftime("%d-%m-%Y")
+            yesterday_str = (now_ist - timedelta(days=1)).strftime("%d-%m-%Y")
 
             candidates = [str(i) for i in range(1, scan_limit + 1)]
             newly_found = []
@@ -893,7 +943,7 @@ class AwsTelemetryService:
         """Instantly (<1ms) returns a valid live dashboard payload so HTTP requests never timeout."""
         dev_key = str(clean_id).strip()
         dev_meta = cls.get_device_metadata(clean_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(IST)
         today_date_str = now.strftime("%Y-%m-%d")
 
         today_sum = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(today_date_str, {})
@@ -975,8 +1025,8 @@ class AwsTelemetryService:
         Matches exact schema of get_cow_live_dashboard in cows.py.
         STRICTLY NON-BLOCKING: returns immediately (<2ms) from RAM/snapshot and refreshes in background.
         """
-        now = datetime.now(timezone.utc)
-        today_date_str = now.strftime("%d-%m-%Y")
+        now_ist = datetime.now(IST)
+        today_date_str = now_ist.strftime("%d-%m-%Y")
         is_querying_today = (target_date is None or target_date == today_date_str)
         target = target_date or today_date_str
         dev_key = str(device_id).strip()
@@ -991,6 +1041,14 @@ class AwsTelemetryService:
         # Stale-While-Revalidate: Return last valid computed dashboard immediately (<2ms)
         last_dash = _LAST_VALID_DASHBOARD.get(clean_id) or _LAST_VALID_DASHBOARD.get(dev_key)
         if is_querying_today and last_dash:
+            d_str = now_ist.strftime("%Y-%m-%d")
+            today_s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str) or _AWS_DAILY_SUMMARIES.get(dev_key, {}).get(d_str)
+            if today_s and (today_s.get("monitored_hours", 0.0) or 0.0) > (last_dash.get("healthStatus", {}).get("monitoredHoursToday", 0.0) or 0.0):
+                last_dash["healthStatus"]["monitoredHoursToday"] = today_s["monitored_hours"]
+                last_dash["healthStatus"]["ruminationHoursToday"] = today_s.get("rum_hours", 0.0)
+                last_dash["healthStatus"]["lyingHoursToday"] = today_s.get("lying_hours", 0.0)
+                last_dash["healthStatus"]["feedingHoursToday"] = today_s.get("feed_hours", 0.0)
+                last_dash["healthStatus"]["movingHoursToday"] = today_s.get("move_hours", 0.0)
             cls._trigger_background_live_refresh(clean_id, target)
             return last_dash
 
@@ -1002,9 +1060,105 @@ class AwsTelemetryService:
         return baseline
 
     @classmethod
+    def _calculate_day_metrics(cls, pkts: list) -> dict:
+        """
+        Unified single-source-of-truth calculation for daily livestock behavior metrics.
+        Used identically by Live Diagnostics, 7-Day Analytics, and Node Directory.
+        """
+        tot = len(pkts)
+        if tot == 0:
+            return {
+                "total_packets": 0,
+                "monitored_hours": 0.0,
+                "rum_hours": 0.0,
+                "lying_hours": 0.0,
+                "feed_hours": 0.0,
+                "move_hours": 0.0,
+                "heat_count": 0,
+                "counts": {"RUS": 0, "REL": 0, "FEP": 0, "MOV": 0, "RES": 0, "HEAT": 0},
+                "health_score": 0,
+                "estrus_index": 0
+            }
+
+        first_epoch = pkts[0].get("epoch") or (pkts[0]["timestamp"].timestamp() if pkts[0].get("timestamp") else 0)
+        last_epoch = pkts[-1].get("epoch") or (pkts[-1]["timestamp"].timestamp() if pkts[-1].get("timestamp") else 0)
+        
+        first_dt = datetime.fromtimestamp(first_epoch, tz=IST) if first_epoch > 0 else None
+        last_dt = datetime.fromtimestamp(last_epoch, tz=IST) if last_epoch > 0 else None
+        now_ist = datetime.now(IST)
+
+        # Check if this day is today in IST
+        is_today = bool((first_dt and first_dt.date() == now_ist.date()) or (last_dt and last_dt.date() == now_ist.date()))
+
+        if is_today:
+            midnight_today = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_cap = max(0.1, (now_ist - midnight_today).total_seconds() / 3600.0)
+        else:
+            day_cap = 24.0
+
+        # Calculate time span of actual observations throughout the day
+        if last_epoch >= first_epoch and first_epoch > 0:
+            span_hrs = (last_epoch - first_epoch + AWS_PACKET_INTERVAL_SECONDS) / 3600.0
+            packet_hrs = (tot * AWS_PACKET_INTERVAL_SECONDS) / 3600.0
+            # If packets arrive with varying interval, the actual time cannot exceed the observation window span
+            mon_hrs = min(day_cap, min(span_hrs, packet_hrs) if tot > 1 else packet_hrs)
+        else:
+            packet_hrs = (tot * AWS_PACKET_INTERVAL_SECONDS) / 3600.0
+            mon_hrs = min(day_cap, packet_hrs)
+
+        mon_hrs = round(min(day_cap, max(0.0, mon_hrs)), 2)
+
+        counts = {"RUS": 0, "REL": 0, "FEP": 0, "MOV": 0, "RES": 0, "HEAT": 0}
+        for p in pkts:
+            inf = p.get("ml_inference", {})
+            act_info = inf.get("activity", {})
+            code = act_info.get("code")
+            if code == "RUS":
+                counts["RUS"] += 1
+            elif code == "REL":
+                counts["REL"] += 1
+            elif code in ["FEP", "FED", "GRZ"]:
+                counts["FEP"] += 1
+            elif code == "MOV":
+                counts["MOV"] += 1
+            elif code == "RES":
+                counts["RES"] += 1
+
+            if inf.get("heat_detection", {}).get("in_heat"):
+                counts["HEAT"] += 1
+
+        r_hrs = min(mon_hrs, round((counts["RUS"] / tot) * mon_hrs, 2))
+        l_hrs = min(mon_hrs, round((counts["REL"] / tot) * mon_hrs, 2))
+        f_hrs = min(mon_hrs, round((counts["FEP"] / tot) * mon_hrs, 2))
+        m_hrs = min(mon_hrs, round((counts["MOV"] / tot) * mon_hrs, 2))
+
+        if mon_hrs >= 4.0:
+            h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
+        elif mon_hrs > 0:
+            rum_ratio = r_hrs / mon_hrs
+            h_score = min(100, max(25, int((rum_ratio / 0.35) * 80))) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 20)
+        else:
+            h_score = 0
+
+        e_idx = int((counts["HEAT"] / tot) * 100)
+
+        return {
+            "total_packets": tot,
+            "monitored_hours": mon_hrs,
+            "rum_hours": r_hrs,
+            "lying_hours": l_hrs,
+            "feed_hours": f_hrs,
+            "move_hours": m_hrs,
+            "heat_count": counts["HEAT"],
+            "counts": counts,
+            "health_score": h_score,
+            "estrus_index": min(100, e_idx)
+        }
+
+    @classmethod
     def _compute_live_dashboard(cls, device_id: str, target_date: str = None) -> dict:
-        now = datetime.now(timezone.utc)
-        today_date_str = now.strftime("%d-%m-%Y")
+        now_ist = datetime.now(IST)
+        today_date_str = now_ist.strftime("%d-%m-%Y")
         is_querying_today = (target_date is None or target_date == today_date_str)
         target = target_date or today_date_str
         dev_key = str(device_id).strip()
@@ -1014,16 +1168,16 @@ class AwsTelemetryService:
         packets = cls.get_processed_packets(clean_id, start_date=target, end_date=target)
         dev_meta = cls.get_device_metadata(clean_id)
 
-        # Filter packets strictly belonging to target date
+        # Filter packets strictly belonging to target date in IST
         target_date_obj = datetime.strptime(target, "%d-%m-%Y").date()
-        target_packets = [p for p in packets if p["timestamp"].date() == target_date_obj]
-        if not target_packets and not is_querying_today:
+        target_packets = [p for p in packets if p["timestamp"].astimezone(IST).date() == target_date_obj]
+        if not target_packets:
             target_packets = packets
 
         # If device has no packets for this target date (e.g. today has no data)
         if not target_packets:
             last_known = _LAST_KNOWN_TELEMETRY.get(clean_id) or _LAST_KNOWN_TELEMETRY.get(dev_key)
-            last_telem = last_known["telemetry"] if last_known else {"x": 0, "y": 0, "z": 0, "magnitude": 0, "timestamp": now.isoformat()}
+            last_telem = last_known["telemetry"] if last_known else {"x": 0, "y": 0, "z": 0, "magnitude": 0, "timestamp": now_ist.isoformat()}
             last_accel = last_known["accelBuffer"] if last_known else {"labels": [f"{(i*0.1):.1f}s" for i in range(80)], "x": [0]*80, "y": [0]*80, "z": [0]*80, "mag": [0]*80}
             if packets:
                 p_last = packets[-1]
@@ -1060,7 +1214,7 @@ class AwsTelemetryService:
                     "ruminationScore": 0,
                     "estrusProbabilityPercent": 0,
                     "isHeatDetected": False,
-                    "healthRecommendation": "WARNING: No sensor data received today. Check collar node battery and uplink connectivity.",
+                    "healthRecommendation": "No sensor telemetry received today for this collar node. Metrics and diagnostics will activate when fresh data arrives.",
                     "health_risk_decision": "NO_DATA"
                 },
                 "liveTelemetry": last_telem,
@@ -1083,34 +1237,17 @@ class AwsTelemetryService:
         latest = target_packets[-1]
         latest_ts = latest["timestamp"]
         
-        # Check staleness (if last data is older than 24h)
-        is_stale = (now - latest_ts).total_seconds() > (24 * 3600)
+        # Check staleness in IST
+        is_stale = (now_ist - latest_ts.astimezone(IST)).total_seconds() > (24 * 3600)
 
-        total_pkts = len(target_packets)
-        monitored_hours = round((total_pkts * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
-
-        counts = {"RUS": 0, "REL": 0, "FEP": 0, "MOV": 0, "RES": 0, "HEAT": 0}
-        for p in target_packets:
-            inf = p["ml_inference"]
-            code = inf["activity"]["code"]
-            if code in ["RUS"]:
-                counts["RUS"] += 1
-            elif code in ["REL"]:
-                counts["REL"] += 1
-            elif code in ["FEP", "FED", "GRZ"]:
-                counts["FEP"] += 1
-            elif code in ["MOV"]:
-                counts["MOV"] += 1
-            elif code in ["RES"]:
-                counts["RES"] += 1
-
-            if inf["heat_detection"]["in_heat"]:
-                counts["HEAT"] += 1
-
-        rum_hrs = round((counts["RUS"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
-        lying_hrs = round((counts["REL"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
-        feed_hrs = round((counts["FEP"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
-        move_hrs = round((counts["MOV"] * AWS_PACKET_INTERVAL_SECONDS) / 3600.0, 2)
+        # Call unified metrics calculation
+        metrics = cls._calculate_day_metrics(target_packets)
+        monitored_hours = metrics["monitored_hours"]
+        rum_hrs = metrics["rum_hours"]
+        lying_hrs = metrics["lying_hours"]
+        feed_hrs = metrics["feed_hours"]
+        move_hrs = metrics["move_hours"]
+        counts = metrics["counts"]
 
         latest_ml = latest["ml_inference"]
         act_code = latest_ml["activity"]["code"]
@@ -1165,7 +1302,7 @@ class AwsTelemetryService:
                 "lyingHoursToday": lying_hrs,
                 "feedingHoursToday": feed_hrs,
                 "movingHoursToday": move_hrs,
-                "ruminationScore": min(100, int((rum_hrs / 8.0) * 100)) if rum_hrs > 0 else 0,
+                "ruminationScore": metrics["health_score"],
                 "estrusProbabilityPercent": heat_prob_pct,
                 "isHeatDetected": is_heat,
                 "healthRecommendation": recommendation,
@@ -1195,6 +1332,66 @@ class AwsTelemetryService:
             "timestamp": latest_ts.isoformat()
         }
         _LAST_KNOWN_TELEMETRY[dev_key] = _LAST_KNOWN_TELEMETRY[clean_id]
+
+        # Atomically synchronize across all pages:
+        d_str = target_date_obj.strftime("%Y-%m-%d")
+        if clean_id not in _AWS_DAILY_SUMMARIES:
+            _AWS_DAILY_SUMMARIES[clean_id] = {}
+        _AWS_DAILY_SUMMARIES[clean_id][d_str] = metrics
+        if dev_key not in _AWS_DAILY_SUMMARIES:
+            _AWS_DAILY_SUMMARIES[dev_key] = {}
+        _AWS_DAILY_SUMMARIES[dev_key][d_str] = metrics
+
+        # Synchronize today's bar in _LAST_VALID_7DAY
+        for target_key in [clean_id, dev_key]:
+            cached_7d = _LAST_VALID_7DAY.get(target_key)
+            if cached_7d and "dates" in cached_7d and d_str in cached_7d["dates"]:
+                try:
+                    d_idx = cached_7d["dates"].index(d_str)
+                    cached_7d["monitoredHours"][d_idx] = monitored_hours
+                    cached_7d["ruminationHours"][d_idx] = rum_hrs
+                    cached_7d["lyingRestHours"][d_idx] = lying_hrs
+                    cached_7d["feedingHours"][d_idx] = feed_hrs
+                    cached_7d["activeHours"][d_idx] = move_hrs
+                    cached_7d["healthScores"][d_idx] = metrics["health_score"]
+                except Exception:
+                    pass
+
+        # Persist today's summary to PostgreSQL DailyCowSummary
+        try:
+            from app.database import SessionLocal
+            from app.models.datalogger import DailyCowSummary
+            with SessionLocal() as db:
+                aws_db_id = f"aws-{clean_id}"
+                existing_row = db.query(DailyCowSummary).filter(
+                    DailyCowSummary.device_id == aws_db_id,
+                    DailyCowSummary.date == target_date_obj
+                ).first()
+                if not existing_row:
+                    db.add(DailyCowSummary(
+                        device_id=aws_db_id,
+                        date=target_date_obj,
+                        total_packets=metrics["total_packets"],
+                        monitored_hours=monitored_hours,
+                        rumination_hours=rum_hrs,
+                        lying_hours=lying_hrs,
+                        feeding_hours=feed_hrs,
+                        moving_hours=move_hrs,
+                        heat_count=metrics["heat_count"]
+                    ))
+                else:
+                    existing_row.total_packets = metrics["total_packets"]
+                    existing_row.monitored_hours = monitored_hours
+                    existing_row.rumination_hours = rum_hrs
+                    existing_row.lying_hours = lying_hrs
+                    existing_row.feeding_hours = feed_hrs
+                    existing_row.moving_hours = move_hrs
+                    existing_row.heat_count = metrics["heat_count"]
+                db.commit()
+        except Exception as dbe:
+            logger.debug(f"DB live summary persist notice: {dbe}")
+
+        _HERD_ITEMS_CACHE["expires_at"] = 0.0
         _save_snapshot()
         _AWS_CACHE[cache_key] = {"expires_at": time.time() + 60.0, "data": live_payload}
         return live_payload
@@ -1203,65 +1400,25 @@ class AwsTelemetryService:
     def _update_daily_summary_from_packets(cls, dev_id: str, d: date, pkts: list):
         """Update _AWS_DAILY_SUMMARIES for a specific device and date."""
         dev_key = str(dev_id).strip()
+        clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
         d_str = d.strftime("%Y-%m-%d")
+        if clean_id not in _AWS_DAILY_SUMMARIES:
+            _AWS_DAILY_SUMMARIES[clean_id] = {}
         if dev_key not in _AWS_DAILY_SUMMARIES:
             _AWS_DAILY_SUMMARIES[dev_key] = {}
 
         if not pkts:
-            existing = _AWS_DAILY_SUMMARIES[dev_key].get(d_str)
+            existing = _AWS_DAILY_SUMMARIES[clean_id].get(d_str)
             if existing and ((existing.get("monitored_hours", 0) or 0) > 0 or (existing.get("total_packets", 0) or 0) > 0):
                 return
-            _AWS_DAILY_SUMMARIES[dev_key][d_str] = {
-                "monitored_hours": 0.0,
-                "rum_hours": 0.0,
-                "lying_hours": 0.0,
-                "feed_hours": 0.0,
-                "move_hours": 0.0,
-                "heat_count": 0,
-                "total_packets": 0,
-                "health_score": 0,
-                "estrus_index": 0
-            }
+            empty_m = cls._calculate_day_metrics([])
+            _AWS_DAILY_SUMMARIES[clean_id][d_str] = empty_m
+            _AWS_DAILY_SUMMARIES[dev_key][d_str] = empty_m
             return
 
-        tot = len(pkts)
-        first_epoch = pkts[0].get("epoch") or (pkts[0].get("timestamp").timestamp() if pkts[0].get("timestamp") else 0)
-        last_epoch = pkts[-1].get("epoch") or (pkts[-1].get("timestamp").timestamp() if pkts[-1].get("timestamp") else 0)
-        span_hrs = (last_epoch - first_epoch) / 3600.0 if last_epoch > first_epoch else (tot * 45) / 3600.0
-        mon_hrs = min(24.0, round(max(span_hrs, (tot * 45) / 3600.0), 2))
-
-        c_rus = sum(1 for p in pkts if p.get("ml_inference", {}).get("activity", {}).get("code") == "RUS")
-        c_rel = sum(1 for p in pkts if p.get("ml_inference", {}).get("activity", {}).get("code") == "REL")
-        c_fep = sum(1 for p in pkts if p.get("ml_inference", {}).get("activity", {}).get("code") in ["FEP", "FED", "GRZ"])
-        c_mov = sum(1 for p in pkts if p.get("ml_inference", {}).get("activity", {}).get("code") == "MOV")
-        c_heat = sum(1 for p in pkts if p.get("ml_inference", {}).get("heat_detection", {}).get("in_heat"))
-
-        r_hrs = min(mon_hrs, round((c_rus / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-        l_hrs = min(mon_hrs, round((c_rel / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-        f_hrs = min(mon_hrs, round((c_fep / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-        m_hrs = min(mon_hrs, round((c_mov / tot) * mon_hrs, 2)) if tot > 0 else 0.0
-
-        if mon_hrs >= 4.0:
-            h_score = min(100, int((r_hrs / 8.0) * 100)) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 0)
-        elif mon_hrs > 0:
-            rum_ratio = r_hrs / mon_hrs
-            h_score = min(100, max(25, int((rum_ratio / 0.35) * 80))) if r_hrs > 0 else (50 if (l_hrs > 0 or f_hrs > 0) else 20)
-        else:
-            h_score = 0
-
-        e_idx = int((c_heat / tot) * 100) if tot > 0 else 0
-
-        _AWS_DAILY_SUMMARIES[dev_key][d_str] = {
-            "monitored_hours": mon_hrs,
-            "rum_hours": r_hrs,
-            "lying_hours": l_hrs,
-            "feed_hours": f_hrs,
-            "move_hours": m_hrs,
-            "heat_count": c_heat,
-            "total_packets": tot,
-            "health_score": h_score,
-            "estrus_index": min(100, e_idx)
-        }
+        metrics = cls._calculate_day_metrics(pkts)
+        _AWS_DAILY_SUMMARIES[clean_id][d_str] = metrics
+        _AWS_DAILY_SUMMARIES[dev_key][d_str] = metrics
 
     @classmethod
     def _trigger_background_7day_refresh(cls, clean_id: str):
@@ -1304,8 +1461,8 @@ class AwsTelemetryService:
     @classmethod
     def _build_immediate_baseline_7day(cls, clean_id: str, dev_key: str) -> dict:
         """Instantly (<1ms) construct a valid 7-day structure so the UI never blocks or times out."""
-        now = datetime.now(timezone.utc)
-        today = now.date()
+        now_ist = datetime.now(IST)
+        today = now_ist.date()
         date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
         day_labels = [d.strftime("%a") for d in date_range]
         date_labels = [d.strftime("%Y-%m-%d") for d in date_range]
@@ -1412,8 +1569,8 @@ class AwsTelemetryService:
         """
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        now = datetime.now(timezone.utc)
-        today = now.date()
+        now_ist = datetime.now(IST)
+        today = now_ist.date()
         today_str = today.strftime("%Y-%m-%d")
 
         cache_key = f"7day_{clean_id}_{today_str}"
@@ -1442,6 +1599,26 @@ class AwsTelemetryService:
                 is_valid_7d = True
 
         if is_valid_7d:
+            d_str = today.strftime("%Y-%m-%d")
+            today_s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(d_str) or _AWS_DAILY_SUMMARIES.get(dev_key, {}).get(d_str)
+            last_dash = _LAST_VALID_DASHBOARD.get(clean_id) or _LAST_VALID_DASHBOARD.get(dev_key)
+            best_mon = last_7d.get("monitoredHours", [])[-1] if last_7d.get("monitoredHours") else 0.0
+            best_rum = last_7d.get("ruminationHours", [])[-1] if last_7d.get("ruminationHours") else 0.0
+            if today_s:
+                if (today_s.get("monitored_hours", 0.0) or 0.0) > best_mon:
+                    best_mon = today_s["monitored_hours"]
+                    best_rum = today_s.get("rum_hours", 0.0)
+            if last_dash:
+                dash_mon = last_dash.get("healthStatus", {}).get("monitoredHoursToday", 0.0) or 0.0
+                if dash_mon > best_mon:
+                    best_mon = dash_mon
+                    best_rum = last_dash.get("healthStatus", {}).get("ruminationHoursToday", 0.0) or 0.0
+            if best_mon > 0 and last_7d.get("monitoredHours"):
+                last_7d["monitoredHours"][-1] = best_mon
+                last_7d["ruminationHours"][-1] = best_rum
+                if last_dash and "healthStatus" in last_dash:
+                    last_dash["healthStatus"]["monitoredHoursToday"] = best_mon
+                    last_dash["healthStatus"]["ruminationHoursToday"] = best_rum
             cls._trigger_background_7day_refresh(clean_id)
             return last_7d
 
@@ -1468,8 +1645,8 @@ class AwsTelemetryService:
         """
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        now = datetime.now(timezone.utc)
-        today = now.date()
+        now_ist = datetime.now(IST)
+        today = now_ist.date()
         today_str = today.strftime("%Y-%m-%d")
 
         date_range = [today - timedelta(days=i) for i in range(6, -1, -1)]
@@ -1613,6 +1790,20 @@ class AwsTelemetryService:
         cache_key_7d = f"7day_{clean_id}_{today_str}"
         _AWS_CACHE[cache_key_7d] = {"expires_at": time.time() + 60.0, "data": result_7d}
 
+        # Atomically synchronize Live Diagnostics dashboard health status with today's metrics
+        s_today = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(today_str)
+        if s_today:
+            dash = _LAST_VALID_DASHBOARD.get(clean_id) or _LAST_VALID_DASHBOARD.get(dev_key)
+            if dash and "healthStatus" in dash:
+                dash["healthStatus"].update({
+                    "monitoredHoursToday": s_today["monitored_hours"],
+                    "ruminationHoursToday": s_today["rum_hours"],
+                    "lyingHoursToday": s_today["lying_hours"],
+                    "feedingHoursToday": s_today["feed_hours"],
+                    "movingHoursToday": s_today["move_hours"],
+                    "ruminationScore": s_today["health_score"]
+                })
+
         # 5. Build chronological transition logs from today_packets and merge with existing logs
         if today_packets:
             today_packets.sort(key=lambda p: p["timestamp"])
@@ -1697,6 +1888,7 @@ class AwsTelemetryService:
             cache_key_logs = f"actlogs_{clean_id}_{today_str}"
             _AWS_CACHE[cache_key_logs] = {"expires_at": time.time() + 60.0, "data": grouped_logs}
 
+        _HERD_ITEMS_CACHE["expires_at"] = 0.0
         _save_snapshot()
         return result_7d
 
@@ -1708,7 +1900,7 @@ class AwsTelemetryService:
         """
         dev_key = str(device_id).strip()
         clean_id = dev_key.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(IST)
         today = now.date()
 
         cache_key = f"actlogs_{clean_id}_{today.strftime('%Y-%m-%d')}"
@@ -1798,7 +1990,7 @@ class AwsTelemetryService:
                 try:
                     time.sleep(30)
                     active_ids = [d for d in cls.get_known_device_ids() if cls.device_has_7day_data(d)]
-                    today_str = datetime.now(timezone.utc).strftime("%d-%m-%Y")
+                    today_str = datetime.now(IST).strftime("%d-%m-%Y")
                     for dev_id in active_ids:
                         try:
                             cls._compute_live_dashboard(dev_id, today_str)
@@ -1824,13 +2016,28 @@ class AwsTelemetryService:
         if last_seen:
             try:
                 dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
-                today_utc = datetime.now(timezone.utc).date()
-                if dt.date() == today_utc:
+                today_ist = datetime.now(IST).date()
+                if dt.astimezone(IST).date() == today_ist:
                     is_today = True
             except Exception:
                 pass
 
-        is_stale = dash.get("isStale", False) or (not is_today) or (h.get("monitoredHoursToday", 0.0) == 0.0)
+        mon_hours = h.get("monitoredHoursToday", 0.0) or 0.0
+        rum_hours = h.get("ruminationHoursToday", 0.0) or 0.0
+        lying_hours = h.get("lyingHoursToday", 0.0) or 0.0
+        feed_hours = h.get("feedingHoursToday", 0.0) or 0.0
+        move_hours = h.get("movingHoursToday", 0.0) or 0.0
+
+        d_str = datetime.now(IST).strftime("%Y-%m-%d")
+        today_s = _AWS_DAILY_SUMMARIES.get(dev_id, {}).get(d_str) or _AWS_DAILY_SUMMARIES.get(str(dev_id).replace("aws-", ""), {}).get(d_str)
+        if today_s and (today_s.get("monitored_hours", 0.0) or 0.0) > mon_hours:
+            mon_hours = today_s["monitored_hours"]
+            rum_hours = today_s.get("rum_hours", rum_hours)
+            lying_hours = today_s.get("lying_hours", lying_hours)
+            feed_hours = today_s.get("feed_hours", feed_hours)
+            move_hours = today_s.get("move_hours", move_hours)
+
+        is_stale = dash.get("isStale", False) or (not is_today) or (mon_hours == 0.0)
         return {
             "id": f"aws-{dev_id}",
             "device_id": dev_id,
@@ -1844,19 +2051,19 @@ class AwsTelemetryService:
             "health_risk_decision": "NO_DATA" if is_stale else h.get("health_risk_decision", "NORMAL"),
             "currentActivity": None if is_stale else (act.get("code") if act else None),
             "activityName": "No Recent Data" if is_stale else (act.get("name", "Standing Rest") if act else "Standing Rest"),
-            "ruminationHoursToday": 0.0 if is_stale else h.get("ruminationHoursToday", 0.0),
-            "lyingHoursToday": 0.0 if is_stale else h.get("lyingHoursToday", 0.0),
-            "feedingHoursToday": 0.0 if is_stale else h.get("feedingHoursToday", 0.0),
-            "movingHoursToday": 0.0 if is_stale else h.get("movingHoursToday", 0.0),
+            "ruminationHoursToday": 0.0 if is_stale else rum_hours,
+            "lyingHoursToday": 0.0 if is_stale else lying_hours,
+            "feedingHoursToday": 0.0 if is_stale else feed_hours,
+            "movingHoursToday": 0.0 if is_stale else move_hours,
             "estrusProbability": 0 if is_stale else h.get("estrusProbabilityPercent", 0),
             "lastSeen": last_seen,
             "isStale": is_stale,
-            "monitoredHoursToday": 0.0 if is_stale else h.get("monitoredHoursToday", 0.0)
+            "monitoredHoursToday": 0.0 if is_stale else mon_hours
         }
 
     @classmethod
     def device_has_7day_data(cls, dev_id: str) -> bool:
-        """Checks if device has transmitted any data in the last 7 days relative to UTC now."""
+        """Checks if device has transmitted any data in the last 7 days relative to IST now."""
         if not dev_id:
             return False
         dev_key = str(dev_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
@@ -1867,12 +2074,12 @@ class AwsTelemetryService:
             return True
 
         # 2. Check 7-day daily summaries
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(IST)
         dates_7d = set((now_dt.date() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7))
         s_map = _AWS_DAILY_SUMMARIES.get(dev_key, {})
         for d_str in dates_7d:
             s = s_map.get(d_str, {})
-            if (s.get("monitored_hours", 0) or 0) > 0 or (s.get("total_packets", 0) or 0) > 0:
+            if (s.get("monitored_hours", 0.0) or 0) > 0 or (s.get("total_packets", 0) or 0) > 0:
                 return True
 
         # 3. Check logs
@@ -1892,7 +2099,7 @@ class AwsTelemetryService:
                 row = db.query(DailyCowSummary.id).filter(
                     DailyCowSummary.device_id == f"aws-{dev_key}",
                     DailyCowSummary.date >= min_date,
-                    (DailyCowSummary.monitored_hours > 0) | (DailyCowSummary.total_packets > 0)
+                    ((DailyCowSummary.monitored_hours > 0) | (DailyCowSummary.total_packets > 0))
                 ).first()
                 if row:
                     return True
@@ -1961,18 +2168,18 @@ class AwsTelemetryService:
                 "breed": meta.get("breed"),
                 "location": meta.get("location") or "Paddock AWS",
                 "weight": meta.get("weight") or "480 kg",
-                "healthStatus": "HIGH_RISK",
-                "health_risk_decision": "HIGH_RISK",
-                "currentActivity": "RUS",
-                "activityName": "Ruminating",
-                "ruminationHoursToday": 2.5,
+                "healthStatus": "NO_DATA",
+                "health_risk_decision": "NO_DATA",
+                "currentActivity": None,
+                "activityName": "No Recent Data",
+                "ruminationHoursToday": 0.0,
                 "lyingHoursToday": 0.0,
                 "feedingHoursToday": 0.0,
                 "movingHoursToday": 0.0,
-                "estrusProbability": 50,
-                "lastSeen": datetime.now(timezone.utc).isoformat(),
-                "isStale": False,
-                "monitoredHoursToday": 2.5
+                "estrusProbability": 0,
+                "lastSeen": None,
+                "isStale": True,
+                "monitoredHoursToday": 0.0
             })
         return items
 
