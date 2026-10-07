@@ -116,6 +116,7 @@ export default function App() {
         return {
           ...c,
           currentActivity: act.code || c.currentActivity,
+          activityName: act.name || c.activityName,
           health_risk_decision: risk,
           healthStatus: (health.isHeatDetected || risk === 'HIGH_RISK') ? 'HIGH_RISK' : risk,
           ruminationHoursToday: health.ruminationHoursToday !== undefined ? health.ruminationHoursToday : c.ruminationHoursToday,
@@ -123,7 +124,8 @@ export default function App() {
           lyingHoursToday: health.lyingHoursToday !== undefined ? health.lyingHoursToday : c.lyingHoursToday,
           feedingHoursToday: health.feedingHoursToday !== undefined ? health.feedingHoursToday : c.feedingHoursToday,
           movingHoursToday: health.movingHoursToday !== undefined ? health.movingHoursToday : c.movingHoursToday,
-          estrusProbability: health.estrusProbabilityPercent !== undefined ? health.estrusProbabilityPercent : c.estrusProbability
+          estrusProbability: health.estrusProbabilityPercent !== undefined ? health.estrusProbabilityPercent : c.estrusProbability,
+          isStale: cowData.isStale !== undefined ? cowData.isStale : c.isStale
         };
       }
       return c;
@@ -161,22 +163,20 @@ export default function App() {
     }
   }, []);
 
-  // 1. Fetch cow list — poll every 60s (cow list rarely changes)
+  // 1. Fetch cow list — dynamic interval: 20s when viewing directory, 45s otherwise
   //    with error backoff: quick retry on cold starts, back off on persistent errors
   useEffect(() => {
     if (!isAuthenticated) return;
     let isSubscribed = true;
     fetchCows();
 
-    // Dynamic interval: 60s normal, quick retry (3s) on cold-start errors
     const getInterval = () => {
       const errorCount = cowsErrorCountRef.current;
-      if (errorCount === 0) return 60000;          // 60s normal
+      if (errorCount === 0) return activeTab === 'herd' ? 20000 : 45000;
       if (errorCount < 3) return 3000;             // Rapid 3s retry on cold start
       return Math.min(errorCount * 10000, 60000);  // Cap at 60s
     };
 
-    // Use a recursive setTimeout for dynamic intervals
     let timeoutId;
     const scheduleNext = () => {
       timeoutId = setTimeout(async () => {
@@ -190,31 +190,29 @@ export default function App() {
       isSubscribed = false;
       clearTimeout(timeoutId);
     };
-  }, [isAuthenticated]); // Removed activeTab — no need to refetch cow list on tab change
+  }, [isAuthenticated, activeTab]);
 
 
-  // Load 7-day & logs only if on 7day tab — fetch both in parallel for speed
-  // Uses stale-while-revalidate: backend returns instantly (empty on first cold call),
-  // then auto-retries after 15s to get the background-computed data.
+  // Load 7-day & logs on 7day tab with auto-polling every 20s so as collar packets
+  // arrive every minute, today's transition logs and hours update automatically in real-time!
   useEffect(() => {
     if (!currentCowId || activeTab !== '7day' || !isAuthenticated) return;
     let isSubscribed = true;
     let retryTimerId = null;
+    let pollTimerId = null;
     let retryCount = 0;
 
     const fetch7Day = async (isRetry = false) => {
-      if (!isRetry) setIs7DayLoading(true);
+      if (!isRetry && !data7Day) setIs7DayLoading(true);
       try {
-        // Fire both requests simultaneously — don't wait for one before starting other
         const [res7, resLogs] = await Promise.all([
           fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/7day`, {}, 45000),
           fetchWithTimeout(`${API_BASE}/api/cow/${currentCowId}/activity-log?limit=250`, {}, 45000)
         ]);
         const [data7, dataLogs] = await Promise.all([res7.json(), resLogs.json()]);
-        if (data7.success) setData7Day(data7);
-        if (dataLogs.success) setLogs(dataLogs.logs || []);
+        if (isSubscribed && data7.success) setData7Day(data7);
+        if (isSubscribed && dataLogs.success) setLogs(dataLogs.logs || []);
 
-        // If backend returned preliminary baseline, smoothly retry with exponential backoff (up to 4 retries)
         const isEmpty7Day = !data7.monitoredHours || data7.monitoredHours.every(h => h === 0);
         const isEmptyLogs = !dataLogs.logs || dataLogs.logs.length === 0;
         const isAwsDevice = String(currentCowId).startsWith('aws-');
@@ -231,19 +229,24 @@ export default function App() {
     };
 
     fetch7Day();
+
+    // Auto-poll every 20 seconds while on 7-day tab to seamlessly capture every-minute incoming packets
+    pollTimerId = setInterval(() => {
+      if (isSubscribed) fetch7Day(true);
+    }, 20000);
+
     return () => {
       isSubscribed = false;
       if (retryTimerId) clearTimeout(retryTimerId);
+      if (pollTimerId) clearInterval(pollTimerId);
     };
   }, [currentCowId, activeTab, isAuthenticated, refresh7DayTrigger]);
 
-  // 2. Real-time Telemetry Stream Loop (with in-flight guard + error backoff)
+  // 2. Real-time Telemetry Stream Loop (rapid 12s interval with in-flight guard + error backoff)
   useEffect(() => {
     if (!currentCowId || activeTab !== 'live' || !isAuthenticated) return;
 
     let isSubscribed = true;
-    const isAws = currentCowId && String(currentCowId).startsWith('aws-');
-    // Generous 45s timeout to survive Render cold start and cloud API hops
     const timeoutVal = 45000;
 
     const fetchLive = async () => {
@@ -267,11 +270,10 @@ export default function App() {
       }
     };
 
-    // Dynamic interval: AWS devices poll every 30s (cloud API), DB devices every 15s
-    // On errors or cold-start, retries rapidly in 3s instead of stalling
+    // Rapid 12s live telemetry polling so new packets arriving every minute appear immediately
     const getInterval = () => {
       const errorCount = liveErrorCountRef.current;
-      const baseInterval = isAws ? 30000 : 15000;
+      const baseInterval = 12000;
       if (errorCount === 0) return baseInterval;
       if (errorCount < 3) return 3000;              // Rapid 3s retry on cold start or hiccup
       return Math.min(errorCount * 10000, 60000);   // Cap at 60s

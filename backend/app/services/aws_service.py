@@ -1737,10 +1737,19 @@ class AwsTelemetryService:
             if best_mon > 0 and last_7d.get("monitoredHours"):
                 last_7d["monitoredHours"][-1] = best_mon
                 last_7d["ruminationHours"][-1] = best_rum
+                if today_s:
+                    if last_7d.get("activeHours") and len(last_7d["activeHours"]) > 0:
+                        last_7d["activeHours"][-1] = today_s.get("move_hours", 0.0)
+                    if last_7d.get("feedingHours") and len(last_7d["feedingHours"]) > 0:
+                        last_7d["feedingHours"][-1] = today_s.get("feed_hours", 0.0)
+                    if last_7d.get("lyingRestHours") and len(last_7d["lyingRestHours"]) > 0:
+                        last_7d["lyingRestHours"][-1] = today_s.get("lying_hours", 0.0)
+                    if last_7d.get("healthScores") and len(last_7d["healthScores"]) > 0:
+                        last_7d["healthScores"][-1] = today_s.get("health_score", 100)
                 if last_dash and "healthStatus" in last_dash:
                     last_dash["healthStatus"]["monitoredHoursToday"] = best_mon
                     last_dash["healthStatus"]["ruminationHoursToday"] = best_rum
-            cls._trigger_background_7day_refresh(clean_id)
+            cls._trigger_background_7day_refresh(clean_id, force_refresh=True)
             return last_7d
 
         # Strictly non-blocking baseline: Build immediate baseline from daily summaries & DB, cache it, trigger background refresh, and return
