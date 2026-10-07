@@ -330,7 +330,14 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
       <div className="grid-herd">
         {filteredCows && filteredCows.length > 0 ? (
           filteredCows.map(cow => {
-            const act = activities[cow.currentActivity] || activities['OTH'] || { name: 'Unknown', color: '#94A3B8', icon: 'fa-question' };
+            let actKey = cow.currentActivity;
+            if (!actKey && !cow.isStale && ((cow.monitoredHoursToday || 0) > 0)) {
+              if ((cow.movingHoursToday || 0) > (cow.ruminationHoursToday || 0) && (cow.movingHoursToday || 0) > (cow.feedingHoursToday || 0)) actKey = 'MOV';
+              else if ((cow.feedingHoursToday || 0) > (cow.ruminationHoursToday || 0)) actKey = 'FEP';
+              else if ((cow.ruminationHoursToday || 0) > 0) actKey = 'RUS';
+              else actKey = 'RES';
+            }
+            const act = activities[actKey] || (actKey ? { name: cow.activityName || actKey, color: '#F59E0B', icon: 'fa-person-walking' } : (activities['OTH'] || { name: 'Standing Rest', color: '#64748B', icon: 'fa-pause' }));
             const isCritical = cow.health_risk_decision === 'HIGH_RISK' || cow.health_risk_decision === 'ESTRUS_ALERT';
             const isAws = isAwsDevice(cow);
 
@@ -402,8 +409,8 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
-                      <span className={`health-badge ${cow.health_risk_decision || 'NO_DATA'}`}>
-                        {cow.isStale ? 'NO DATA' : (cow.health_risk_decision || 'NO DATA').replace('_', ' ')}
+                      <span className={`health-badge ${(cow.isStale || (cow.monitoredHoursToday || 0) === 0 || cow.health_risk_decision === 'NO_DATA') ? 'NO_DATA' : (cow.health_risk_decision || 'HEALTHY')}`}>
+                        {(cow.isStale || (cow.monitoredHoursToday || 0) === 0 || cow.health_risk_decision === 'NO_DATA') ? 'NO DATA' : (cow.health_risk_decision || 'HEALTHY').replace('_', ' ')}
                       </span>
                       {isAws ? (
                         <span className="badge-source aws">
@@ -430,21 +437,25 @@ export default function HerdOverview({ cows, onSelectCow, onRefreshCows }) {
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.45rem', padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
                     <div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>Rumination</div>
-                      <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--accent-sky)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
-                        {formatHours(cow.ruminationHoursToday)}
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                        {(cow.ruminationHoursToday || 0) > 0 ? 'Rumination' : ((cow.movingHoursToday || 0) > 0 ? 'Active Walk' : ((cow.feedingHoursToday || 0) > 0 ? 'Feeding' : 'Rumination'))}
+                      </div>
+                      <div style={{ fontSize: '1rem', fontWeight: 800, color: (cow.ruminationHoursToday || 0) > 0 ? 'var(--accent-sky)' : 'var(--accent-amber)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
+                        {formatHours(cow.ruminationHoursToday || cow.movingHoursToday || cow.feedingHoursToday || 0)}
                       </div>
                     </div>
                     <div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>Total Rest</div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                        {(cow.lyingHoursToday || 0) > 0 ? 'Total Rest' : ((cow.monitoredHoursToday || 0) > 0 ? 'Monitored' : 'Total Rest')}
+                      </div>
                       <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--accent-purple)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
-                        {formatHours(cow.lyingHoursToday)}
+                        {formatHours(cow.lyingHoursToday || cow.monitoredHoursToday || 0)}
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>Estrus Prob</div>
-                      <div style={{ fontSize: '1rem', fontWeight: 800, color: cow.estrusProbability > 50 ? 'var(--accent-rose)' : 'var(--accent-emerald)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
-                        {cow.estrusProbability}%
+                      <div style={{ fontSize: '1rem', fontWeight: 800, color: (cow.estrusProbability || 0) > 50 ? 'var(--accent-rose)' : 'var(--accent-emerald)', marginTop: '0.1rem', fontFamily: 'var(--font-display)' }}>
+                        {cow.estrusProbability || 0}%
                       </div>
                     </div>
                   </div>

@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
                     known_ids = [d for d in AwsTelemetryService.get_known_device_ids() if AwsTelemetryService.device_has_7day_data(d)]
                     if known_ids:
                         with ThreadPoolExecutor(max_workers=min(5, len(known_ids))) as executor:
-                            list(executor.map(lambda d: AwsTelemetryService.refresh_single_device(d, force_refresh=False), known_ids))
+                            list(executor.map(lambda d: AwsTelemetryService.refresh_single_device(d, force_refresh=True), known_ids))
                         logger.info(f"Pre-warmed live dashboards, 7-day trends, and activity logs for {len(known_ids)} active AWS devices: {known_ids}")
                 except Exception as e:
                     logger.warning(f"AWS prewarm error: {e}")

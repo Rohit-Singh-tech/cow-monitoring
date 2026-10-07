@@ -303,6 +303,10 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
   const isTodayOnly = (isoStr) => {
     if (!isoStr) return false;
     try {
+      const todayStr = (data7Day?.dates && data7Day.dates.length > 0) 
+        ? data7Day.dates[data7Day.dates.length - 1] 
+        : new Date().toISOString().slice(0, 10);
+      if (isoStr.startsWith(todayStr)) return true;
       const logDate = new Date(isoStr);
       if (isNaN(logDate.getTime())) return false;
       const now = new Date();
