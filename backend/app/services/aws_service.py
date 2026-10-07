@@ -343,6 +343,7 @@ _HERD_ITEMS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": []}
 _METADATA_CACHE: Dict[str, Dict[str, Any]] = {}
 _TAG_AWS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "data": set()}
 _ML_PREDICTION_CACHE: Dict[str, Any] = {}
+_TAGS_LOADED_AT: float = 0.0
 _HERD_IS_REFRESHING = False
 _REFRESH_THREAD_LOCK = threading.Lock()
 CACHE_TTL_SECONDS = 20.0
@@ -1056,6 +1057,10 @@ class AwsTelemetryService:
                 last_dash["healthStatus"]["lyingHoursToday"] = today_s.get("lying_hours", 0.0)
                 last_dash["healthStatus"]["feedingHoursToday"] = today_s.get("feed_hours", 0.0)
                 last_dash["healthStatus"]["movingHoursToday"] = today_s.get("move_hours", 0.0)
+                if (today_s.get("monitored_hours", 0.0) or 0.0) > 0:
+                    last_dash["isStale"] = False
+                    if str(last_dash.get("healthStatus", {}).get("healthRecommendation", "")).startswith("WARNING: No sensor data received today"):
+                        last_dash["healthStatus"]["healthRecommendation"] = "All health parameters within normal range based on real-time AWS telemetry analysis."
             cls._trigger_background_live_refresh(clean_id, target)
             return last_dash
 
@@ -1444,7 +1449,7 @@ class AwsTelemetryService:
         _AWS_DAILY_SUMMARIES[dev_key][d_str] = metrics
 
     @classmethod
-    def _trigger_background_7day_refresh(cls, clean_id: str):
+    def _trigger_background_7day_refresh(cls, clean_id: str, force_refresh: bool = False):
         dev_key = str(clean_id).strip()
         with _7DAY_REFRESH_LOCK:
             if dev_key in _7DAY_REFRESHING_SET:
@@ -1453,7 +1458,7 @@ class AwsTelemetryService:
 
         def worker():
             try:
-                cls._refresh_7day_and_logs(dev_key)
+                cls._refresh_7day_and_logs(dev_key, force_refresh=force_refresh)
             except Exception as e:
                 logger.warning(f"Error in background 7day refresh for dev {dev_key}: {e}")
             finally:
@@ -1463,7 +1468,7 @@ class AwsTelemetryService:
         threading.Thread(target=worker, daemon=True, name=f"7DayRefresh-{dev_key}").start()
 
     @classmethod
-    def _trigger_background_logs_refresh(cls, clean_id: str):
+    def _trigger_background_logs_refresh(cls, clean_id: str, force_refresh: bool = False):
         dev_key = str(clean_id).strip()
         with _LOGS_REFRESH_LOCK:
             if dev_key in _LOGS_REFRESHING_SET:
@@ -1472,7 +1477,7 @@ class AwsTelemetryService:
 
         def worker():
             try:
-                cls._refresh_7day_and_logs(dev_key)
+                cls._refresh_7day_and_logs(dev_key, force_refresh=force_refresh)
             except Exception as e:
                 logger.warning(f"Error in background logs refresh for dev {dev_key}: {e}")
             finally:
@@ -1655,11 +1660,11 @@ class AwsTelemetryService:
         return baseline
 
     @classmethod
-    def _compute_7day_activity(cls, device_id: str) -> dict:
-        return cls._refresh_7day_and_logs(device_id)
+    def _compute_7day_activity(cls, device_id: str, force_refresh: bool = False) -> dict:
+        return cls._refresh_7day_and_logs(device_id, force_refresh=force_refresh)
 
     @classmethod
-    def _refresh_7day_and_logs(cls, device_id: str) -> dict:
+    def _refresh_7day_and_logs(cls, device_id: str, force_refresh: bool = False) -> dict:
         """
         Optimized 7-day pipeline:
         1. Fetches today's live packets from AWS API.
@@ -2061,7 +2066,10 @@ class AwsTelemetryService:
             feed_hours = today_s.get("feed_hours", feed_hours)
             move_hours = today_s.get("move_hours", move_hours)
 
-        is_stale = dash.get("isStale", False) or (not is_today) or (mon_hours == 0.0)
+        if today_s and (today_s.get("monitored_hours", 0.0) or 0.0) > 0:
+            is_stale = (mon_hours == 0.0)
+        else:
+            is_stale = dash.get("isStale", False) or (not is_today) or (mon_hours == 0.0)
         return {
             "id": f"aws-{dev_id}",
             "device_id": dev_id,
