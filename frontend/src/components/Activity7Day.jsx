@@ -502,6 +502,10 @@ export default function Activity7Day({ data7Day, logs, cowId, theme, isLoading, 
                 <i className={`fa-solid fa-arrows-rotate ${isLoading ? 'fa-spin' : ''}`}></i> {isLoading ? 'SYNCING...' : 'REFRESH'}
               </button>
             )}
+            <span className="meta-chip" style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '5px', borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.08)', color: 'var(--accent-emerald)', height: '34px' }}>
+              <span className="pulse-dot" style={{ width: '6px', height: '6px' }}></span>
+              LIVE AUTO-SYNC (20s)
+            </span>
             <a href={`${API_BASE}/api/export/csv?cowId=${cowId}`} className="btn btn-primary" target="_blank" rel="noreferrer" style={{ height: '34px', fontSize: '0.78rem' }}>
               <i className="fa-solid fa-file-arrow-down"></i> EXPORT CSV
             </a>

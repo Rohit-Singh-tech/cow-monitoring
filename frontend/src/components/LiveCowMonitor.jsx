@@ -392,9 +392,9 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
             </span>
           </div>
           <div>
-            <div className="metric-value">{isStale ? 0 : (accelDataObj.labels?.length || 0)}</div>
+            <div className="metric-value">{isStale ? 0 : (currentData?.totalPacketsToday || currentData?.packetsBuffered || accelDataObj.labels?.length || 0)}</div>
             <div className="metric-title">PACKETS BUFFERED</div>
-            <div className="metric-footer">Rolling Window Size</div>
+            <div className="metric-footer">{currentData?.totalPacketsToday ? `Today's Ingested: ${currentData.totalPacketsToday}` : 'Rolling Window Size (80)'}</div>
           </div>
         </div>
 
@@ -446,8 +446,14 @@ export default function LiveCowMonitor({ currentData, accelBuffer, theme }) {
                 <span className="code-badge" style={{ background: 'rgba(167, 139, 250, 0.2)', color: 'var(--accent-purple)', border: '1px solid var(--accent-purple)' }}>Z: {Number(latestT.z || 0).toFixed(3)}g</span>
                 <span className="code-badge" style={{ background: 'rgba(251, 191, 36, 0.2)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber)' }}>|a|: {Number(latestT.magnitude || 0).toFixed(3)}g</span>
               </div>
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
-                PAYLOAD: 80 SAMPLES / 240 BYTES
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.725rem', fontFamily: 'var(--font-mono)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {latestT.timestamp && (
+                  <span style={{ color: 'var(--accent-emerald)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <i className="fa-solid fa-satellite-dish"></i>
+                    LAST PACKET: {new Date(latestT.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                )}
+                <span>PAYLOAD: 80 SAMPLES / 240 BYTES</span>
               </div>
             </div>
           </div>
