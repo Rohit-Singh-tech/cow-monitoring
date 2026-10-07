@@ -208,18 +208,60 @@ def _load_snapshot():
         today_ist = datetime.now(IST).date()
         expected_dates = [(today_ist - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
         for dev_id, s7 in old_7day.items():
+            clean_dev = str(dev_id).lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
             if s7.get("dates") == expected_dates:
                 # Check for 0.0 gaps that have data in _AWS_DAILY_SUMMARIES
                 has_gap = False
                 mons = s7.get("monitoredHours", [])
                 for idx, d_str in enumerate(expected_dates):
                     mon_val = mons[idx] if idx < len(mons) else 0.0
-                    known_sum = _AWS_DAILY_SUMMARIES.get(dev_id, {}).get(d_str, {})
+                    known_sum = _AWS_DAILY_SUMMARIES.get(clean_dev, {}).get(d_str, {})
                     if mon_val == 0.0 and (known_sum.get("monitored_hours", 0.0) or 0) > 0:
                         has_gap = True
                         break
                 if not has_gap:
+                    _LAST_VALID_7DAY[clean_dev] = s7
                     _LAST_VALID_7DAY[dev_id] = s7
+            else:
+                # Rolling window shifted to a new day: reconstruct 7-day structure seamlessly from daily summaries
+                dev_sums = _AWS_DAILY_SUMMARIES.get(clean_dev, {})
+                rum_l, lying_l, feed_l, act_l, mon_l, score_l, estrus_l = [], [], [], [], [], [], []
+                for d_str in expected_dates:
+                    s_d = dev_sums.get(d_str, {})
+                    rum_l.append(s_d.get("rum_hours", 0.0) or 0.0)
+                    lying_l.append(s_d.get("lying_hours", 0.0) or 0.0)
+                    feed_l.append(s_d.get("feed_hours", 0.0) or 0.0)
+                    act_l.append(s_d.get("move_hours", 0.0) or 0.0)
+                    mon_l.append(s_d.get("monitored_hours", 0.0) or 0.0)
+                    score_l.append(s_d.get("health_score", 0) or 0)
+                    estrus_l.append(s_d.get("estrus_index", 0) or 0)
+
+                day_lbls = [datetime.strptime(d, "%Y-%m-%d").strftime("%a") for d in expected_dates]
+                reconstructed = {
+                    "cowId": f"aws-{clean_dev}",
+                    "device_id": str(clean_dev),
+                    "source": "aws_api",
+                    "days": day_lbls,
+                    "dates": expected_dates,
+                    "ruminationHours": rum_l,
+                    "lyingRestHours": lying_l,
+                    "feedingHours": feed_l,
+                    "activeHours": act_l,
+                    "monitoredHours": mon_l,
+                    "healthScores": score_l,
+                    "estrusIndices": estrus_l,
+                    "estrusAlerts": [],
+                    "weeklyAverageHours": {
+                        "RUS": round(sum(rum_l) / 7.0, 4),
+                        "REL": round(sum(lying_l) / 7.0, 4),
+                        "FEP": round(sum(feed_l) / 7.0, 4),
+                        "MOV": round(sum(act_l) / 7.0, 4),
+                        "RES": 0.0,
+                        "DRN": 0.0
+                    }
+                }
+                _LAST_VALID_7DAY[clean_dev] = reconstructed
+                _LAST_VALID_7DAY[dev_id] = reconstructed
 
         # Cache last known telemetry from saved dashboard if not present
         for dev_id, dash in _LAST_VALID_DASHBOARD.items():
@@ -1384,6 +1426,12 @@ class AwsTelemetryService:
                     cached_7d["healthScores"][d_idx] = metrics["health_score"]
                 except Exception:
                     pass
+            else:
+                try:
+                    rebuilt_7d = cls._build_immediate_baseline_7day(clean_id, dev_key)
+                    _LAST_VALID_7DAY[target_key] = rebuilt_7d
+                except Exception:
+                    pass
 
         # Persist today's summary to PostgreSQL DailyCowSummary
         try:
@@ -2003,6 +2051,22 @@ class AwsTelemetryService:
         }
 
     @classmethod
+    def refresh_single_device(cls, dev_id: str, force_refresh: bool = False) -> dict:
+        """
+        Unified full refresh for an active AWS device:
+        Computes Live Dashboard, updates 7-day trends and activity transition logs.
+        """
+        clean_id = str(dev_id).strip().lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        now_ist = datetime.now(IST)
+        today_str = now_ist.strftime("%d-%m-%Y")
+        dash = cls._compute_live_dashboard(clean_id, today_str, force_refresh=force_refresh)
+        try:
+            cls._refresh_7day_and_logs(clean_id, force_refresh=force_refresh)
+        except Exception as e:
+            logger.warning(f"Error refreshing 7day/logs for dev {clean_id}: {e}")
+        return dash
+
+    @classmethod
     def start_telemetry_refresher_daemon(cls):
         """Starts background daemon that keeps active AWS telemetry perpetually fresh."""
         global _TELEMETRY_DAEMON_STARTED
@@ -2019,13 +2083,9 @@ class AwsTelemetryService:
                 try:
                     time.sleep(20)  # Check every 20 seconds for fresh collar telemetry
                     active_ids = [d for d in cls.get_known_device_ids() if cls.device_has_7day_data(d)]
-                    today_str = datetime.now(IST).strftime("%d-%m-%Y")
-                    for dev_id in active_ids:
-                        try:
-                            cls._compute_live_dashboard(dev_id, today_str, force_refresh=True)
-                        except Exception:
-                            pass
-                        time.sleep(1.0)  # gentle pacing to avoid bursting CPU/network
+                    if active_ids:
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(active_ids))) as executor:
+                            list(executor.map(lambda d: cls.refresh_single_device(d, force_refresh=True), active_ids))
                 except Exception as e:
                     logger.warning(f"Error in telemetry refresher daemon: {e}")
                     time.sleep(20)
@@ -2152,7 +2212,14 @@ class AwsTelemetryService:
     @classmethod
     def _fetch_single_herd_item(cls, dev_id: str) -> dict:
         dev_str = str(dev_id).strip()
-        dash = cls.get_live_dashboard(dev_str)
+        clean_id = dev_str.lower().replace("aws-", "").replace("aws ", "").replace("aws#", "").strip()
+        today_date_str = datetime.now(IST).strftime("%Y-%m-%d")
+        today_s = _AWS_DAILY_SUMMARIES.get(clean_id, {}).get(today_date_str)
+        dash = _LAST_VALID_DASHBOARD.get(clean_id) or _LAST_VALID_DASHBOARD.get(dev_str)
+        # If dashboard is missing or stale with 0 hours, compute fresh live telemetry directly
+        if not dash or dash.get("isStale", True) or not today_s:
+            today_aws_fmt = datetime.now(IST).strftime("%d-%m-%Y")
+            dash = cls._compute_live_dashboard(clean_id, today_aws_fmt, force_refresh=False)
         return cls._build_device_overview(dash)
 
     @classmethod
