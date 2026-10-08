@@ -68,8 +68,8 @@ def main():
                         DailyCowSummary.device_id == aws_db_id,
                         DailyCowSummary.date == d
                     ).first()
-                    if existing and (existing.monitored_hours or 0) > 0:
-                        print(f"  [{d_str}] 0 pkts from API, but DB has {existing.monitored_hours}h — preserving DB record", flush=True)
+                    if existing and (existing.monitored_hours or 0) > 0 and getattr(existing, "is_finalized", False):
+                        print(f"  [{d_str}] 0 pkts from API, but DB has finalized {existing.monitored_hours}h — preserving DB record", flush=True)
                         continue
 
                     print(f"  [{d_str}] 0 packets ({fetch_dt:.1f}s)", flush=True)
@@ -128,6 +128,8 @@ def main():
                     DailyCowSummary.date == d
                 ).first()
 
+                is_fin = bool(d < today)
+
                 if not existing:
                     db.add(DailyCowSummary(
                         device_id=aws_db_id,
@@ -138,9 +140,12 @@ def main():
                         lying_hours=l_hrs,
                         feeding_hours=f_hrs,
                         moving_hours=m_hrs,
-                        heat_count=c_heat
+                        heat_count=c_heat,
+                        is_finalized=is_fin
                     ))
                 else:
+                    if getattr(existing, "is_finalized", False) and (d < today) and (existing.monitored_hours or 0.0) >= 22.0 and mon_hrs < (existing.monitored_hours or 0.0):
+                        continue
                     existing.total_packets = tot_pkts
                     existing.monitored_hours = mon_hrs
                     existing.rumination_hours = r_hrs
@@ -148,6 +153,7 @@ def main():
                     existing.feeding_hours = f_hrs
                     existing.moving_hours = m_hrs
                     existing.heat_count = c_heat
+                    existing.is_finalized = is_fin
 
                 db.commit()
                 total_synced += 1
